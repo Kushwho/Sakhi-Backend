@@ -36,12 +36,11 @@ COPY start.sh .
 # Make start script executable
 RUN chmod +x start.sh
 
-# Download Silero VAD + Turn Detector models at build time (not at runtime)
-RUN python -c "from livekit.plugins.silero import VAD; VAD.load()" 2>/dev/null || true
-RUN python -c "from livekit.plugins.turn_detector.multilingual import MultilingualModel; MultilingualModel()" 2>/dev/null || true
-
-# Switch to non-root user
+# Switch to non-root user FIRST so models are saved in its home directory
 USER sakhi
+
+# Download Silero VAD + Turn Detector models at build time (not at runtime)
+RUN python agent.py download-files
 
 # Expose the FastAPI port
 EXPOSE 8000
