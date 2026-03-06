@@ -243,4 +243,11 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    agents.cli.run_app(server)
+    agents.cli.run_app(
+        server,
+        agents.WorkerOptions(
+            agent_name="sakhi-agent",
+            load_threshold=0.95,
+            max_concurrent_jobs=1,
+        ),
+    )
