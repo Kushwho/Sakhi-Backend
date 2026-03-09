@@ -28,9 +28,14 @@ WORKDIR /app
 # Copy installed packages from builder stage
 COPY --from=builder /install /usr/local
 
-# Copy application code
+# Copy application code — entrypoints + packages
 COPY agent.py .
 COPY api.py .
+COPY emotion_detector.py .
+COPY api/ api/
+COPY agents/ agents/
+COPY services/ services/
+COPY db/ db/
 COPY start.sh .
 
 # Make start script executable
