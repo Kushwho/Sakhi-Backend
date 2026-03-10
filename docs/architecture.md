@@ -4,14 +4,15 @@ This document describes the architecture of the Sakhi MVP voice agent, focusing 
 
 ## Core Components
 
-1.  **Frontend (Next.js)**: Handles the UI, microphone/speaker access, and 3D avatar rendering.
+1.  **Frontend (Next.js)**: Handles the UI, microphone/speaker access for voice, text input for chat, and 3D avatar rendering.
 2.  **Backend (FastAPI + LiveKit Agents + Hume)**:
-    *   **FastAPI**: Serves the `POST /api/token` endpoint to authenticate children and generate LiveKit room tokens. Dispatches both the voice agent and the emotion detector.
-    *   **Voice Agent**: The Python process that connects to the LiveKit room, listens to the child's audio, talks back, and uses short-term memory to adjust its tone based on the child's emotion.
-    *   **Emotion Detector**: A separate "programmatic participant" that silently joins the room, streams the child's audio to the Hume Prosody API, injects emotion data into the voice agent's context, and triggers frontend avatar animations.
-3.  **LiveKit Cloud**: The WebRTC infrastructure that routes realtime audio, video, and data (RPC) between the frontend and the backend components.
+    *   **FastAPI**: Serves the core APIs (`/api/token` for Voice MVP, `/api/chat/*` for Chat Mode). 
+    *   **Chat Mode (REST)**: Stateless `/api/chat/stream` endpoint that uses Groq LLM to respond to text history and `/api/chat/end` to generate database summaries.
+    *   **Voice Agent (LiveKit)**: The Python process that connects to the LiveKit room, listens to the child's audio, talks back, and uses short-term memory to adjust its tone based on the child's emotion.
+    *   **Emotion Detector**: A separate "programmatic participant" that silently joins the Voice room, streams the child's audio to the Hume Prosody API, injects emotion data into the voice agent's context, and triggers frontend avatar animations.
+3.  **LiveKit Cloud (Voice Only)**: The WebRTC infrastructure that routes realtime audio, video, and data (RPC) between the frontend and the backend voice components.
 
-## Architecture Diagram
+## Architecture Diagram (Voice Mode)
 
 ```mermaid
 sequenceDiagram
