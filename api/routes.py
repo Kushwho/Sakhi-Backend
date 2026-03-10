@@ -21,12 +21,14 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from livekit import api  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-load_dotenv(".env.local")
+load_dotenv(".env")
 from api.auth_routes import router as auth_router
 from api.chat_routes import router as chat_router
 from api.curious_routes import curio_router
 from api.curious_routes import router as curious_router
 from api.dashboard_routes import router as dashboard_router
+from api.story_routes import router as story_router
+from api.chat_routes import router as chat_router
 from api.dependencies import require_profile_token
 from api.gentype_routes import router as gentype_router
 from api.say_what_you_see_routes import router as swys_router
@@ -84,6 +86,7 @@ app.include_router(curio_router)
 app.include_router(swys_router)
 app.include_router(gentype_router)
 app.include_router(story_router)
+app.include_router(chat_router)
 
 
 class TokenRequest(BaseModel):

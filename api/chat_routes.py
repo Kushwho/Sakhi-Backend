@@ -15,7 +15,7 @@ All LLM calls go through the centralized ``SakhiLLM`` layer via a LangGraph
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -49,6 +49,11 @@ class ChatHistoryRequest(BaseModel):
     thread_id: str
 
 
+class EndSessionRequest(BaseModel):
+    thread_id: str
+    mode: str = "default"
+
+
 # ---------------------------------------------------------------------------
 # POST /api/chat/send — stream an assistant reply
 # ---------------------------------------------------------------------------
@@ -66,20 +71,12 @@ async def _stream_graph_response(graph, user_message: str, config: dict):
         ):
             kind = event.get("event")
 
-            # Debug — log every event type to see what's coming through
             logger.debug(f"Graph event: {kind} | name: {event.get('name')}")
 
             if kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and hasattr(chunk, "content") and chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'value': chunk.content})}\n\n"
-
-            # # Fallback: full response if streaming tokens aren't firing
-            # elif kind == "on_chat_model_end":
-            #     output = event.get("data", {}).get("output")
-            #     if output and hasattr(output, "content") and output.content:
-            #         logger.warning("Streaming tokens missing — falling back to on_chat_model_end")
-            #         yield f"data: {json.dumps({'type': 'token', 'value': output.content})}\n\n"
 
     except Exception as e:
         logger.error(f"Chat graph streaming error: {e}", exc_info=True)
@@ -181,13 +178,8 @@ async def chat_history(req: ChatHistoryRequest, claims: dict = Depends(require_p
 
 
 # ---------------------------------------------------------------------------
-# POST /api/chat/end — session summarisation (unchanged)
+# POST /api/chat/end — session summarisation
 # ---------------------------------------------------------------------------
-
-
-class EndSessionRequest(BaseModel):
-    thread_id: str
-    mode: str = "default"
 
 
 @router.post("/end")
@@ -212,8 +204,8 @@ async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(requir
         result = await summarize_session(
             profile_id=claims["profile_id"],
             room_name=req.thread_id,
-            started_at=datetime.utcnow(),  # approximate if not tracked
-            ended_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),  # approximate if not tracked
+            ended_at=datetime.now(timezone.utc),
             transcript=transcript,
             turn_count=turn_count,
             mode=req.mode,
