@@ -49,7 +49,9 @@ class TestSakhiLLM:
         mock_async_groq_class.return_value = mock_client
 
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=MagicMock(content='{"result": "success"}'))]
+        mock_response.choices = [
+            MagicMock(message=MagicMock(content='{"result": "success"}'))
+        ]
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         llm = SakhiLLM(model="test-model")
@@ -88,7 +90,9 @@ class TestSakhiLLM:
         """If the Groq API call raises, generate_json re-raises the exception."""
         mock_client = MagicMock()
         mock_async_groq_class.return_value = mock_client
-        mock_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("API unavailable"))
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=RuntimeError("API unavailable")
+        )
 
         llm = SakhiLLM(model="test-model")
         with pytest.raises(RuntimeError, match="API unavailable"):

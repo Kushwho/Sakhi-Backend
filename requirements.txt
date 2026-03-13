@@ -23,6 +23,8 @@ langgraph-checkpoint-postgres
 langgraph-prebuilt
 langgraph-sdk
 langsmith
-replicate
+sentence-transformers
 boto3>=1.35.0
 httpx
+groq
+pytest-asyncio

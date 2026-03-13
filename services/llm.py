@@ -65,8 +65,6 @@ class SakhiLLM:
         Raises:
             Exception: If the underlying LLM call fails or returns invalid JSON.
         """
-        import json
-
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})

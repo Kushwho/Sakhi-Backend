@@ -286,7 +286,6 @@ def _format_transcript(transcript: list[dict]) -> str:
 
 async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
     """Make a single LLM call to extract topics, mood, and alerts."""
-
     fallback = {
         "topics": [],
         "mood_summary": "Summarization unavailable",
