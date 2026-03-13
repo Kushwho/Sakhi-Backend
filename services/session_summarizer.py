@@ -17,7 +17,6 @@ import uuid
 from datetime import datetime
 
 import asyncpg
-from groq import AsyncGroq
 
 logger = logging.getLogger("sakhi.summarizer")
 
@@ -57,7 +56,7 @@ Analyze the conversation and return a JSON object with exactly these fields:
 2. "mood_summary": One sentence describing the child's overall emotional state during \
 the session (e.g. "Mostly happy and curious, with brief frustration during math problems").
 
-3. "alerts": A list of objects with {title, description, severity} for any concerning \
+3. "alerts": A list of objects with {{title, description, severity}} for any concerning \
 content. Severity must be "info", "warning", or "critical". Look for:
    - References to bullying, self-harm, violence, or abuse
    - Sustained sadness, anxiety, or fear
@@ -235,26 +234,24 @@ def _format_transcript(transcript: list[dict]) -> str:
 
 
 async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
-    """Make a single Groq LLM call to extract topics, mood, and alerts."""
+    """Make a single LLM call to extract topics, mood, and alerts."""
     try:
-        client = AsyncGroq()
+        from services.llm import get_llm_client
+        llm = get_llm_client()
+
         prompt = SUMMARIZE_PROMPT.format(
             transcript=transcript_text,
             emotions=emotions_text,
         )
 
-        response = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}],
+
+        result = await llm.generate_json(
+            prompt=prompt,
             temperature=0.3,
             max_tokens=500,
-            response_format={"type": "json_object"},
         )
 
-        content = response.choices[0].message.content
-        result = json.loads(content)
-
-        # Validate structure
+        # Validate structure — guard against partial LLM responses
         if "topics" not in result:
             result["topics"] = []
         if "mood_summary" not in result:
@@ -262,7 +259,10 @@ async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
         if "alerts" not in result:
             result["alerts"] = []
 
-        logger.info(f"LLM summarization complete: {len(result['topics'])} topics, {len(result['alerts'])} alerts")
+        logger.info(
+            f"LLM summarization complete: "
+            f"{len(result['topics'])} topics, {len(result['alerts'])} alerts"
+        )
         return result
 
     except Exception as e:
