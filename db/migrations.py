@@ -113,6 +113,7 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_alerts_profile
         ON alerts(profile_id, recorded_at DESC);
     """,
+
     # ------- pgvector extension -------
     """
     CREATE EXTENSION IF NOT EXISTS vector;
@@ -347,6 +348,33 @@ SEED_PROMPTS = [
             '"discussion_starters": ["question1", "question2", "question3"]}}'
         ),
     },
+    # ------- stories (Story Narration Agent) -------
+    """
+    CREATE TABLE IF NOT EXISTS stories (
+        id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title          TEXT NOT NULL,
+        genre          TEXT NOT NULL DEFAULT 'general',
+        age_min        INT NOT NULL DEFAULT 4,
+        age_max        INT NOT NULL DEFAULT 12,
+        language       TEXT NOT NULL DEFAULT 'English',
+        total_segments INT NOT NULL DEFAULT 1,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    # ------- story_segments -------
+    """
+    CREATE TABLE IF NOT EXISTS story_segments (
+        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        story_id   UUID NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+        position   INT NOT NULL,
+        content    TEXT NOT NULL,
+        UNIQUE(story_id, position)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_story_segments_lookup
+        ON story_segments(story_id, position);
+    """,
 ]
 
 
