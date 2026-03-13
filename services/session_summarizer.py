@@ -16,9 +16,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-
 import asyncpg
-from groq import AsyncGroq
 
 logger = logging.getLogger("sakhi.summarizer")
 
