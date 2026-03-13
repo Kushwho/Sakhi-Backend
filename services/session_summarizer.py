@@ -57,7 +57,7 @@ Analyze the conversation and return a JSON object with exactly these fields:
 2. "mood_summary": One sentence describing the child's overall emotional state during \
 the session (e.g. "Mostly happy and curious, with brief frustration during math problems").
 
-3. "alerts": A list of objects with {title, description, severity} for any concerning \
+3. "alerts": A list of objects with {{title, description, severity}} for any concerning \
 content. Severity must be "info", "warning", or "critical". Look for:
    - References to bullying, self-harm, violence, or abuse
    - Sustained sadness, anxiety, or fear
@@ -236,6 +236,12 @@ def _format_transcript(transcript: list[dict]) -> str:
 
 async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
     """Make a single Groq LLM call to extract topics, mood, and alerts."""
+    fallback = {
+        "topics": [],
+        "mood_summary": "Summarization unavailable",
+        "alerts": [],
+    }
+
     try:
         client = AsyncGroq()
         prompt = SUMMARIZE_PROMPT.format(
@@ -252,23 +258,49 @@ async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
         )
 
         content = response.choices[0].message.content
+        logger.debug(f"Raw LLM summarization response: {content[:500]}")
+
         result = json.loads(content)
 
-        # Validate structure
-        if "topics" not in result:
-            result["topics"] = []
-        if "mood_summary" not in result:
-            result["mood_summary"] = "No mood data available"
-        if "alerts" not in result:
-            result["alerts"] = []
-
-        logger.info(f"LLM summarization complete: {len(result['topics'])} topics, {len(result['alerts'])} alerts")
-        return result
+        if not isinstance(result, dict):
+            logger.warning(f"LLM returned non-dict JSON: {type(result)}")
+            return fallback
 
     except Exception as e:
-        logger.error(f"LLM summarization failed: {e}")
-        return {
-            "topics": [],
-            "mood_summary": "Summarization unavailable",
-            "alerts": [],
+        logger.error(f"LLM call / JSON parse failed: {e}", exc_info=True)
+        return fallback
+
+    # ── Validate structure (separate try so LLM errors don't mask parse errors)
+    try:
+        topics = result.get("topics", [])
+        if not isinstance(topics, list):
+            topics = []
+
+        mood = result.get("mood_summary", "No mood data available")
+        if not isinstance(mood, str):
+            mood = str(mood)
+
+        raw_alerts = result.get("alerts", [])
+        validated_alerts = []
+        if isinstance(raw_alerts, list):
+            for alert in raw_alerts:
+                if not isinstance(alert, dict):
+                    continue
+                validated_alerts.append({
+                    "title": str(alert.get("title", alert.get("type", "Sakhi noticed something"))),
+                    "description": str(alert.get("description", alert.get("message", ""))),
+                    "severity": str(alert.get("severity", "info")),
+                })
+
+        validated = {
+            "topics": topics,
+            "mood_summary": mood,
+            "alerts": validated_alerts,
         }
+        logger.info(f"LLM summarization complete: {len(topics)} topics, {len(validated_alerts)} alerts")
+        return validated
+
+    except Exception as e:
+        logger.error(f"LLM response validation failed: {e}", exc_info=True)
+        logger.error(f"Raw result was: {result}")
+        return fallback

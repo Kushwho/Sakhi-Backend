@@ -22,6 +22,7 @@ from db.pool import init_pool, close_pool
 from db.migrations import run_migrations
 from api.auth_routes import router as auth_router
 from api.dashboard_routes import router as dashboard_router
+from api.story_routes import router as story_router
 from api.dependencies import require_profile_token
 from services.profiles import get_current_profile
 from utils.logging_config import setup_logging
@@ -54,6 +55,7 @@ app.add_middleware(
 # Mount routers
 app.include_router(auth_router)
 app.include_router(dashboard_router)
+app.include_router(story_router)
 
 
 class TokenResponse(BaseModel):
