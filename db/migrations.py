@@ -375,6 +375,29 @@ SEED_PROMPTS = [
     CREATE INDEX IF NOT EXISTS idx_story_segments_lookup
         ON story_segments(story_id, position);
     """,
+    # ------- pgvector extension -------
+    """
+    CREATE EXTENSION IF NOT EXISTS vector;
+    """,
+    # ------- memories (long-term memory store) -------
+    """
+    CREATE TABLE IF NOT EXISTS memories (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        profile_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        service     TEXT NOT NULL DEFAULT 'sakhi',
+        content     TEXT NOT NULL,
+        embedding   vector(384),
+        metadata    JSONB DEFAULT '{}',
+        strength    REAL NOT NULL DEFAULT 1.0,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    # ------- memory indexes -------
+    """
+    CREATE INDEX IF NOT EXISTS idx_memories_namespace
+        ON memories(service, profile_id);
+    """,
 ]
 
 

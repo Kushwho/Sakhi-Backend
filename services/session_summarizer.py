@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import asyncpg
 
@@ -58,11 +58,7 @@ Analyze the conversation and return a JSON object with exactly these fields:
 2. "mood_summary": One sentence describing the child's overall emotional state during \
 the session (e.g. "Mostly happy and curious, with brief frustration during math problems").
 
-<<<<<<< HEAD
-3. "alerts": A list of objects with {{"title": ..., "description": ..., "severity": ...}} for any concerning \
-=======
-3. "alerts": A list of objects with {{title, description, severity}} for any concerning \
->>>>>>> 34bf53d (story-telling-feature)
+3. "alerts": A list of objects with {{"title": "...", "description": "...", "severity": "..."}} for any concerning \
 content. Severity must be "info", "warning", or "critical". Look for:
    - References to bullying, self-harm, violence, or abuse
    - Sustained sadness, anxiety, or fear
@@ -130,6 +126,7 @@ async def summarize_session(
             "topics": summary.get("topics", []),
             "alerts": summary.get("alerts", []),
         }
+
     async with pool.acquire() as conn:
         session_row = await conn.fetchrow(
             """
@@ -296,43 +293,29 @@ async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
         "alerts": [],
     }
 
+    # ── LLM call
     try:
         from services.llm import get_llm_client
 
         llm = get_llm_client()
-
         prompt = SUMMARIZE_PROMPT.format(
             transcript=transcript_text,
             emotions=emotions_text,
         )
-
         result = await llm.generate_json(
             prompt=prompt,
             temperature=0.3,
             max_tokens=500,
         )
 
-        # Validate structure — guard against partial LLM responses
         if not isinstance(result, dict):
             logger.warning(f"LLM returned non-dict JSON: {type(result)}")
             return fallback
 
-        if "topics" not in result:
-            result["topics"] = []
-        if "mood_summary" not in result:
-            result["mood_summary"] = "No mood data available"
-        if "alerts" not in result:
-            result["alerts"] = []
-
-        logger.info(
-            f"LLM summarization complete: {len(result['topics'])} topics, {len(result['alerts'])} alerts"
-        )
-
-        return result
-
     except Exception as e:
         logger.error(f"LLM call / JSON parse failed: {e}", exc_info=True)
         return fallback
+
     # ── Validate structure (separate try so LLM errors don't mask parse errors)
     try:
         topics = result.get("topics", [])
@@ -360,7 +343,10 @@ async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
             "mood_summary": mood,
             "alerts": validated_alerts,
         }
-        logger.info(f"LLM summarization complete: {len(topics)} topics, {len(validated_alerts)} alerts")
+        logger.info(
+            f"LLM summarization complete: {len(topics)} topics, "
+            f"{len(validated_alerts)} alerts"
+        )
         return validated
 
     except Exception as e:

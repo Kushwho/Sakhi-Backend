@@ -20,17 +20,32 @@ Usage:
 import json
 import logging
 import os
-import time
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 import asyncpg
-import replicate
 from groq import AsyncGroq
 from pydantic import BaseModel, ValidationError, field_validator
 
 logger = logging.getLogger("sakhi.memory")
+
+# ---------------------------------------------------------------------------
+# Embedding model (lazy-loaded)
+# ---------------------------------------------------------------------------
+
+_embedding_model = None
+
+
+def _get_embedding_model():
+    """Lazy-load the sentence-transformers model on first use."""
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+
+        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        logger.info("Loaded embedding model: all-MiniLM-L6-v2 (384-dim)")
+    return _embedding_model
 
 
 # ---------------------------------------------------------------------------
@@ -108,17 +123,6 @@ class ExtractedMemory(BaseModel):
         return v
 
 
-_embedding_model = None
-
-
-def _get_embedding_model():
-    """Lazy-load the sentence-transformers model on first use."""
-    global _embedding_model
-    if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        logger.info("Loaded embedding model: all-MiniLM-L6-v2 (384-dim)")
-    return _embedding_model
 # ---------------------------------------------------------------------------
 # MemoryManager
 # ---------------------------------------------------------------------------
@@ -137,7 +141,7 @@ class MemoryManager:
 
     EXTRACTION_PROMPT = EXTRACT_MEMORIES_PROMPT
     SIMILARITY_THRESHOLD = 0.85  # above this → near-duplicate, reinforce only
-    UPDATE_THRESHOLD = 0.6  # between this and SIMILARITY → LLM merge
+    UPDATE_THRESHOLD = 0.6       # between this and SIMILARITY → LLM merge
     DEFAULT_SERVICE = "sakhi"
     MEMORY_TTL_DAYS = 30
 
@@ -153,11 +157,11 @@ class MemoryManager:
             if not database_url:
                 logger.warning("DATABASE_URL not set — memory persistence disabled")
                 return None
-            self._db_pool = await asyncpg.create_pool(dsn=database_url, min_size=1, max_size=3)
+            self._db_pool = await asyncpg.create_pool(
+                dsn=database_url, min_size=1, max_size=3
+            )
             logger.info("MemoryManager DB pool created")
         return self._db_pool
-
-    
 
     # ── Embedding ──────────────────────────────────────────────────────
 
@@ -209,6 +213,7 @@ class MemoryManager:
             content = mem.get("content", "").strip()
             if not content or len(content) < 5:
                 continue
+
             try:
                 embedding = self.generate_embedding(content)
                 was_new = await self._deduplicate_and_store(
@@ -219,13 +224,11 @@ class MemoryManager:
                     embedding=embedding,
                     metadata={"category": mem.get("category", "other")},
                 )
-                stored.append(
-                    {
-                        "content": content,
-                        "category": mem.get("category", "other"),
-                        "is_new": was_new,
-                    }
-                )
+                stored.append({
+                    "content": content,
+                    "category": mem.get("category", "other"),
+                    "is_new": was_new,
+                })
             except Exception as e:
                 logger.warning(f"Failed to store memory '{content[:50]}': {e}")
 
@@ -266,7 +269,7 @@ class MemoryManager:
             return []
 
         try:
-            query_embedding = await self.generate_embedding(query)
+            query_embedding = self.generate_embedding(query)
             embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
             async with pool.acquire() as conn:
@@ -284,8 +287,6 @@ class MemoryManager:
                       AND profile_id = $3
                       AND updated_at > NOW() - ($4 * INTERVAL '1 day')
                     ORDER BY
-                        -- Blended score: 70% similarity + 30% normalised strength
-                        -- Higher is better, so DESC
                         (1 - (embedding <=> $1::vector)) * 0.7
                         + (LEAST(strength, 10.0) / 10.0) * 0.3
                         DESC
@@ -320,7 +321,6 @@ class MemoryManager:
     async def _call_extraction_llm(self, transcript: list[dict]) -> list[dict]:
         """Call Groq LLM to extract memories from a transcript."""
         try:
-            # Format transcript
             lines = []
             for msg in transcript:
                 role = msg.get("role", "unknown")
@@ -329,8 +329,6 @@ class MemoryManager:
                     continue
                 speaker = "CHILD" if role == "user" else "SAKHI"
                 lines.append(f"{speaker}: {text}")
-
-                
             transcript_text = "\n".join(lines) if lines else "No conversation content."
 
             client = AsyncGroq()
@@ -357,7 +355,6 @@ class MemoryManager:
                         candidates = result[key]
                         break
                 else:
-                    # Single memory object returned directly
                     if "content" in result:
                         candidates = [result]
 
@@ -406,7 +403,10 @@ class MemoryManager:
             merged = response.choices[0].message.content.strip()
             if len(merged) < 5:
                 return new_content
-            logger.debug(f"Merged memory: '{old_content[:40]}' + '{new_content[:40]}' → '{merged[:60]}'")
+            logger.debug(
+                f"Merged memory: '{old_content[:40]}' + '{new_content[:40]}' "
+                f"→ '{merged[:60]}'"
+            )
             return merged
         except Exception as e:
             logger.warning(f"Memory merge LLM call failed, keeping new content: {e}")
@@ -434,7 +434,6 @@ class MemoryManager:
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
         async with pool.acquire() as conn:
-            # Find the most similar existing memory in this namespace
             row = await conn.fetchrow(
                 """
                 SELECT id, content, strength,
@@ -461,10 +460,13 @@ class MemoryManager:
                     WHERE id = $3
                     """,
                     new_strength,
-                    datetime.now(UTC),
+                    datetime.now(timezone.utc),
                     row["id"],
                 )
-                logger.debug(f"Reinforced memory (sim={sim:.2f}): '{row['content'][:50]}' → strength={new_strength}")
+                logger.debug(
+                    f"Reinforced memory (sim={sim:.2f}): "
+                    f"'{row['content'][:50]}' → strength={new_strength}"
+                )
                 return False
 
             elif sim >= self.UPDATE_THRESHOLD:
@@ -473,7 +475,7 @@ class MemoryManager:
                     old_content=row["content"],
                     new_content=content,
                 )
-                merged_embedding = await self.generate_embedding(merged_content)
+                merged_embedding = self.generate_embedding(merged_content)
                 merged_emb_str = "[" + ",".join(str(x) for x in merged_embedding) + "]"
                 new_strength = min(row["strength"] + 1.0, 10.0)
 
@@ -489,7 +491,7 @@ class MemoryManager:
                     merged_content,
                     merged_emb_str,
                     new_strength,
-                    datetime.now(UTC),
+                    datetime.now(timezone.utc),
                     row["id"],
                 )
                 logger.info(
