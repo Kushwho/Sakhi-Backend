@@ -1,76 +1,101 @@
+"""
+Sakhi — Chat API Routes (LangGraph-powered)
+=============================================
+REST endpoints for the text-based chat mode.
+
+Endpoints:
+  - ``POST /api/chat/send``    — stream a single assistant reply
+  - ``POST /api/chat/history`` — retrieve the message history for a thread
+  - ``POST /api/chat/end``     — summarise and persist a finished session
+
+All LLM calls go through the centralized ``SakhiLLM`` layer via a LangGraph
+``StateGraph``.  Conversation memory is backed by a PostgreSQL checkpointer.
+"""
+
+import json
+import uuid
+import logging
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import time
-import uuid
-import logging
-from datetime import datetime, timezone
 
 from api.dependencies import require_profile_token
 from services.profiles import get_current_profile
-from groq import AsyncGroq
+from services.chat_graph import get_chat_graph
 from services.session_summarizer import summarize_session
 
 logger = logging.getLogger("sakhi.api.chat")
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-# System prompt identical to the one in agent.py
-SAKHI_SYSTEM_PROMPT = """\
-You are Sakhi, a warm, curious, and encouraging AI companion for Indian children aged 4–12.
+# ---------------------------------------------------------------------------
+# Request / Response Models
+# ---------------------------------------------------------------------------
 
-Personality:
-- You are playful, patient, and full of wonder.
-- You celebrate small wins enthusiastically.
-- You speak in short, simple sentences appropriate for children.
-- You are strictly child-safe — no violence, no inappropriate content, ever.
 
-Teaching style:
-- You NEVER give direct homework answers.
-- You use Socratic questioning — ask guiding questions to help children discover answers themselves.
-- When explaining concepts, use fun analogies, stories, and examples from everyday Indian life.
+class ChatSendRequest(BaseModel):
+    message: str
+    thread_id: str | None = None
 
-Conversation style:
-- Keep responses concise (2-3 sentences max for young children, up to 4-5 for older ones).
-- Use a cheerful, expressive tone.
-- If the child seems confused, simplify and try a different approach.
-- If the child seems sad or upset, be empathetic and supportive.
 
-You are currently talking to {child_name}, who is {child_age} years old and prefers {child_language}.
-Adjust your vocabulary and complexity to match their age.\
-"""
+class ChatHistoryRequest(BaseModel):
+    thread_id: str
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
 
 class EndSessionRequest(BaseModel):
-    chat_session_id: str
-    started_at: datetime
-    ended_at: datetime
-    transcript: list[dict] # Expected format: [{"role": "user"|"assistant", "text": "..."}]
-    turn_count: int
+    thread_id: str
 
-async def stream_groq_response(messages: list[dict]):
-    client = AsyncGroq()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/send — stream an assistant reply
+# ---------------------------------------------------------------------------
+
+
+async def _stream_graph_response(graph, user_message: str, config: dict):
+    thread_id = config["configurable"]["thread_id"]
+    yield f"data: {json.dumps({'type': 'thread_id', 'value': thread_id})}\n\n"
+
     try:
-        response = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=messages,
-            stream=True
-        )
-        async for chunk in response:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
-    except Exception as e:
-        logger.error(f"Groq streaming error: {e}")
-        yield f"Oops, I had a little hiccup thinking about that! {str(e)}"
+        async for event in graph.astream_events(
+            {"messages": [{"role": "user", "content": user_message}]},
+            config=config,
+            version="v2",
+        ):
+            kind = event.get("event")
 
-@router.post("/stream")
-async def chat_stream(req: ChatRequest, claims: dict = Depends(require_profile_token)):
+            # Debug — log every event type to see what's coming through
+            logger.debug(f"Graph event: {kind} | name: {event.get('name')}")
+
+            if kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'value': chunk.content})}\n\n"
+
+            # # Fallback: full response if streaming tokens aren't firing
+            # elif kind == "on_chat_model_end":
+            #     output = event.get("data", {}).get("output")
+            #     if output and hasattr(output, "content") and output.content:
+            #         logger.warning("Streaming tokens missing — falling back to on_chat_model_end")
+            #         yield f"data: {json.dumps({'type': 'token', 'value': output.content})}\n\n"
+
+    except Exception as e:
+        logger.error(f"Chat graph streaming error: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'value': str(e)})}\n\n"
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+@router.post("/send")
+async def chat_send(req: ChatSendRequest, claims: dict = Depends(require_profile_token)):
+    """Stream an assistant reply for a single user message.
+
+    If ``thread_id`` is omitted, a new conversation thread is created.
+    The thread_id is returned as the first SSE event so the frontend can
+    persist it for subsequent requests.
+    """
     if claims.get("profile_type") != "child":
         raise HTTPException(status_code=403, detail="Only child profiles can start chat sessions")
 
@@ -78,22 +103,70 @@ async def chat_stream(req: ChatRequest, claims: dict = Depends(require_profile_t
 
     child_name = profile.get("display_name", "buddy")
     child_age = profile.get("age") or 8
-    child_language = "English" # Defaulting for now
+    child_language = "English"  # Defaulting for now
 
-    system_prompt = SAKHI_SYSTEM_PROMPT.format(
-        child_name=child_name,
-        child_age=child_age,
-        child_language=child_language,
-    )
+    thread_id = req.thread_id or str(uuid.uuid4())
 
-    groq_messages = [{"role": "system", "content": system_prompt}]
-    for msg in req.messages:
-        groq_messages.append({"role": msg.role, "content": msg.content})
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "child_name": child_name,
+            "child_age": child_age,
+            "child_language": child_language,
+        }
+    }
+
+    graph = get_chat_graph()
 
     return StreamingResponse(
-        stream_groq_response(groq_messages), 
-        media_type="text/event-stream"
+        _stream_graph_response(graph, req.message, config),
+        media_type="text/event-stream",
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/history — retrieve message history for a thread
+# ---------------------------------------------------------------------------
+
+@router.post("/history")
+async def chat_history(req: ChatHistoryRequest, claims: dict = Depends(require_profile_token)):
+    """Return the full message history for an existing thread.
+
+    Loads the latest LangGraph checkpoint for the given ``thread_id``
+    and returns de-serialised messages as a JSON list.
+    """
+    if claims.get("profile_type") != "child":
+        raise HTTPException(status_code=403, detail="Only child profiles can access chat history")
+
+    graph = get_chat_graph()
+    config = {"configurable": {"thread_id": req.thread_id}}
+
+    try:
+        state = await graph.aget_state(config)
+        if state is None or not state.values:
+            return {"thread_id": req.thread_id, "messages": []}
+
+        messages = []
+        for msg in state.values.get("messages", []):
+            messages.append({
+                "role": msg.type if hasattr(msg, "type") else "unknown",
+                "content": msg.content if hasattr(msg, "content") else str(msg),
+            })
+
+        return {"thread_id": req.thread_id, "messages": messages}
+
+    except Exception as e:
+        logger.error(f"Failed to load chat history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load chat history")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/end — session summarisation (unchanged)
+# ---------------------------------------------------------------------------
+
+class EndSessionRequest(BaseModel):
+    thread_id: str
+
 
 @router.post("/end")
 async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(require_profile_token)):
@@ -101,15 +174,29 @@ async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(requir
         raise HTTPException(status_code=403, detail="Only child profiles can end chat sessions")
 
     try:
+        # Fetch history from LangGraph checkpointer
+        graph = get_chat_graph()
+        config = {"configurable": {"thread_id": req.thread_id}}
+        state = await graph.aget_state(config)
+
+        messages = state.values.get("messages", []) if state and state.values else []
+        transcript = [
+            {"role": msg.type, "text": msg.content}
+            for msg in messages
+            if hasattr(msg, "type") and hasattr(msg, "content")
+        ]
+        turn_count = sum(1 for msg in messages if hasattr(msg, "type") and msg.type == "human")
+
         result = await summarize_session(
             profile_id=claims["profile_id"],
-            room_name=req.chat_session_id, # Re-using room_name field for chat_session_id
-            started_at=req.started_at,
-            ended_at=req.ended_at,
-            transcript=req.transcript,
-            turn_count=req.turn_count,
+            room_name=req.thread_id,
+            started_at=datetime.utcnow(),  # approximate if not tracked
+            ended_at=datetime.utcnow(),
+            transcript=transcript,
+            turn_count=turn_count,
         )
         return {"status": "success", "summary": result}
+
     except Exception as e:
         logger.error(f"Failed to end chat session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to save chat summary")
