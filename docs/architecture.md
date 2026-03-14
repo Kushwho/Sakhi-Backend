@@ -67,3 +67,64 @@ To integrate with the backend, the frontend Next.js application must:
 2.  **Connect to LiveKit**: Use the `<LiveKitRoom>` React component provided by `@livekit/components-react`, passing in the `serverUrl` and `token`.
 3.  **Render the Voice UI**: Inside `<LiveKitRoom>`, use `<VoiceAssistantControlBar>` to enable the microphone and `<RoomAudioRenderer>` to automatically play the agent's voice.
 4.  **Listen for RPC (Avatar Animations)**: Register a listener for the `setEmotionState` RPC method on the local participant. When the backend detects an emotion, play the corresponding 3D avatar animation. See `api_contract.md` for payload details.
+
+## Chat Mode Architecture (LangGraph)
+
+The text-based chat mode uses **LangGraph** for orchestration, providing server-side conversation memory via PostgreSQL checkpoints.
+
+### Components
+
+1.  **LangGraph `StateGraph`** (`services/chat_graph.py`): A single-node graph (`chat_node`) that prepends the personalized system prompt and invokes the LLM. Compiled once at startup with an `AsyncPostgresSaver` checkpointer.
+2.  **Centralized LLM** (`services/llm.py`): The `SakhiLLM` class exposes both a raw `AsyncGroq` client (for JSON generation) and a LangChain `ChatGroq` model (for the chat pipeline). All model configuration is centralized here.
+3.  **PostgreSQL Checkpointer** (`services/checkpointer.py`): Manages the `AsyncPostgresSaver` lifecycle. Each conversation thread gets its own checkpoint, so message history is automatically persisted and restored.
+4.  **API Routes** (`api/chat_routes.py`):
+    *   `/api/chat/send` — Streams an assistant reply (SSE). Accepts `{message, thread_id?}`.
+    *   `/api/chat/history` — Returns the full message history for a thread.
+    *   `/api/chat/end` — Summarizes and persists a finished session.
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/chat/send` | `POST` | Stream an assistant reply (SSE) |
+| `/api/chat/history` | `POST` | Fetch full message history for a thread |
+| `/api/chat/end` | `POST` | Summarize and persist a finished session |
+
+### SSE Event Format (`/api/chat/send`)
+
+Request body:
+```json
+{ "message": "What is photosynthesis?", "thread_id": "<uuid or null>" }
+```
+
+The response is a stream of SSE events:
+```
+data: {"type": "thread_id", "value": "<uuid>"}   ← First event returns the thread_id
+data: {"type": "token",     "value": "Photo..."}  ← One per token
+data: {"type": "token",     "value": "synthesis"}
+data: {"type": "done"}
+```
+
+### Chat Request Flow
+
+```mermaid
+sequenceDiagram
+    participant Child as Frontend (Next.js)
+    participant API as FastAPI /api/chat/send
+    participant Graph as LangGraph StateGraph
+    participant CP as AsyncPostgresSaver
+    participant LLM as ChatGroq (via SakhiLLM)
+    participant Groq as Groq Cloud API
+
+    Child->>API: POST {message, thread_id?}
+    API->>Graph: astream_events(user_msg, config)
+    Graph->>CP: Load checkpoint (if thread_id exists)
+    CP-->>Graph: Restored message history
+    Graph->>LLM: ainvoke(system_prompt + history + new msg)
+    LLM->>Groq: Chat completion (streaming)
+    Groq-->>LLM: Token stream
+    LLM-->>Graph: Assistant message
+    Graph->>CP: Save checkpoint (updated history)
+    Graph-->>API: Stream tokens via SSE
+    API-->>Child: SSE events (thread_id, tokens, done)
+```

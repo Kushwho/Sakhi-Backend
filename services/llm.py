@@ -3,6 +3,10 @@ Sakhi — Central LLM Provider
 =============================
 Provides a central abstraction for LLM access across backend services.
 Currently configured to use Groq with the Llama 3.1 8B instant model.
+
+Exposes two interfaces:
+  - ``generate_json()``  — raw AsyncGroq calls (session summariser, etc.)
+  - ``get_chat_model()`` — LangChain ``ChatGroq`` for the LangGraph chat pipeline
 """
 
 import logging
@@ -10,6 +14,7 @@ import os
 from typing import Any
 
 from groq import AsyncGroq
+from langchain_groq import ChatGroq
 
 logger = logging.getLogger("sakhi.llm")
 
@@ -30,6 +35,10 @@ class SakhiLLM:
         # Pass dummy key if none exists so tests/imports don't crash.
         api_key = GROQ_API_KEY or "dummy_key_for_tests"
         self.client = AsyncGroq(api_key=api_key)
+
+    # -----------------------------------------------------------------
+    # Raw Groq interface (used by session_summarizer, etc.)
+    # -----------------------------------------------------------------
 
     async def generate_json(
         self,
@@ -75,6 +84,22 @@ class SakhiLLM:
             logger.error(f"LLM generation failed: {e}")
             raise
 
+    # -----------------------------------------------------------------
+    # LangChain interface (used by LangGraph chat pipeline)
+    # -----------------------------------------------------------------
+
+    def get_langchain_chat_model(self) -> ChatGroq:
+        """Return a LangChain ``ChatGroq`` sharing this instance's config.
+
+        The returned model is suitable for use inside a LangGraph
+        ``StateGraph`` node and supports streaming out of the box.
+        """
+        return ChatGroq(
+            model=self.model,
+            api_key=GROQ_API_KEY or "dummy_key_for_tests",
+            streaming=True,
+        )
+
 
 # Lazy singleton — instantiated on first access, not at import time.
 # This prevents AsyncGroq() from being called during test collection
@@ -88,3 +113,8 @@ def get_llm_client() -> SakhiLLM:
     if _default_llm is None:
         _default_llm = SakhiLLM()
     return _default_llm
+
+
+def get_chat_model() -> ChatGroq:
+    """Get the default LangChain chat model via the centralized LLM layer."""
+    return get_llm_client().get_langchain_chat_model()

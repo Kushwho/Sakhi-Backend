@@ -8,7 +8,12 @@ import json
 import logging
 import os
 import time
+import sys
+import asyncio
 from contextlib import asynccontextmanager
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends
@@ -25,6 +30,8 @@ from api.dashboard_routes import router as dashboard_router
 from api.chat_routes import router as chat_router
 from api.dependencies import require_profile_token
 from services.profiles import get_current_profile
+from services.checkpointer import init_checkpointer, close_checkpointer
+from services.chat_graph import build_chat_graph
 from utils.logging_config import setup_logging
 
 setup_logging()
@@ -34,11 +41,15 @@ logger = logging.getLogger("sakhi.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init DB pool + run migrations. Shutdown: close pool."""
+    """Startup: init DB pool + migrations + LangGraph.  Shutdown: teardown."""
     pool = await init_pool()
     await run_migrations(pool)
     logger.info("Database initialized and migrations applied")
+    await init_checkpointer()
+    build_chat_graph()
+    logger.info("LangGraph chat pipeline ready")
     yield
+    await close_checkpointer()
     await close_pool()
 
 
