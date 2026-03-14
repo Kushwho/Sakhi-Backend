@@ -24,6 +24,7 @@ langgraph-prebuilt
 langgraph-sdk
 langsmith
 sentence-transformers
+replicate
 boto3>=1.35.0
 httpx
 groq

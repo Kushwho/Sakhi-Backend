@@ -22,23 +22,22 @@ from livekit import api  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 load_dotenv(".env")
+
 from api.auth_routes import router as auth_router
 from api.chat_routes import router as chat_router
 from api.curious_routes import curio_router
 from api.curious_routes import router as curious_router
 from api.dashboard_routes import router as dashboard_router
-from api.story_routes import router as story_router
-from api.chat_routes import router as chat_router
-from api.dependencies import require_profile_token
 from api.gentype_routes import router as gentype_router
 from api.say_what_you_see_routes import router as swys_router
 from api.story_routes import router as story_router
+from api.dependencies import require_profile_token
 
 from db.migrations import run_migrations
-from db.pool import init_pool, close_pool
+from db.pool import close_pool, init_pool
 
 from services.chat_graph import build_chat_graph
-from services.checkpointer import init_checkpointer, close_checkpointer
+from services.checkpointer import close_checkpointer, init_checkpointer
 from services.profiles import get_current_profile
 from services.prompts import load_prompts
 
@@ -79,14 +78,12 @@ app.add_middleware(
 # Mount routers
 app.include_router(auth_router)
 app.include_router(dashboard_router)
-
 app.include_router(chat_router)
 app.include_router(curious_router)
 app.include_router(curio_router)
 app.include_router(swys_router)
 app.include_router(gentype_router)
 app.include_router(story_router)
-app.include_router(chat_router)
 
 
 class TokenRequest(BaseModel):
@@ -113,15 +110,10 @@ async def health_check():
 
 @app.post("/api/token", response_model=TokenResponse)
 async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depends(require_profile_token)):
-    """Generate a LiveKit room token for an authenticated child session.
-
-    Requires a valid profile token (child type) in the Authorization header.
-    The child's profile data is fetched from the database using the profile token claims.
-    """
+    """Generate a LiveKit room token for an authenticated child session."""
     if claims.get("profile_type") != "child":
         raise HTTPException(status_code=403, detail="Only child profiles can start voice sessions")
 
-    # Fetch child profile from DB
     profile = await get_current_profile(claims["profile_id"])
 
     child_name = profile.get("display_name", "buddy")
@@ -134,10 +126,8 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
     if not all([livekit_url, api_key, api_secret]):
         raise HTTPException(status_code=500, detail="LiveKit credentials not configured")
 
-    # Each child gets a unique room
     room_name = f"sakhi-{child_name.lower().replace(' ', '-')}-{int(time.time())}"
 
-    # Resolve topic context if needed
     topic_context = None
     if req.mode == "curious_topic" and req.topic_id:
         from services.topics import get_topic_by_id
@@ -146,7 +136,6 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
         if topic:
             topic_context = {"title": topic["title"], "description": topic["description"]}
 
-    # Room metadata carries child profile + mode context for the agent to read
     room_metadata = json.dumps(
         {
             "child_name": child_name,
@@ -159,51 +148,27 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
         }
     )
 
-    # Generate access token
     token = (
         api.AccessToken(api_key, api_secret)
         .with_identity(f"child-{child_name.lower().replace(' ', '-')}")
         .with_name(child_name)
-        .with_grants(
-            api.VideoGrants(
-                room_join=True,
-                room=room_name,
-            )
-        )
+        .with_grants(api.VideoGrants(room_join=True, room=room_name))
         .with_metadata(room_metadata)
     )
 
-    # Create room + dispatch the Sakhi agent and emotion detector
     try:
         lkapi = api.LiveKitAPI()
-
-        # Create the room first
         await lkapi.room.create_room(api.CreateRoomRequest(name=room_name, metadata=room_metadata))
-
-        # Dispatch the voice agent
         await lkapi.agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(
-                agent_name="sakhi-agent",
-                room=room_name,
-            )
+            api.CreateAgentDispatchRequest(agent_name="sakhi-agent", room=room_name)
         )
-
-        # Dispatch the emotion detector (programmatic participant)
         await lkapi.agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(
-                agent_name="emotion-detector",
-                room=room_name,
-            )
+            api.CreateAgentDispatchRequest(agent_name="emotion-detector", room=room_name)
         )
-
         await lkapi.aclose()
         logger.info(f"Room created, agent + emotion detector dispatched: {room_name}")
     except Exception as e:
         logger.error(f"Failed to dispatch agent: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to start voice session") from e
 
-    return TokenResponse(
-        token=token.to_jwt(),
-        room_name=room_name,
-        livekit_url=livekit_url,
-    )
+    return TokenResponse(token=token.to_jwt(), room_name=room_name, livekit_url=livekit_url)

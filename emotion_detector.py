@@ -6,10 +6,17 @@ Thin wrapper: ``python emotion_detector.py start``
 Emotion detection logic lives in agents/emotion_detector.py.
 """
 
+<<<<<<< HEAD
 import asyncio
 import sys
 
 if sys.platform == "win32":
+=======
+import sys
+import asyncio
+
+if sys.platform == 'win32':
+>>>>>>> 498e572 (chat done ai layer done uv introduced)
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from livekit import agents
