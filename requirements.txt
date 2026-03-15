@@ -8,7 +8,7 @@ livekit-api==1.1.0
 livekit-plugins-deepgram==1.4.4
 livekit-plugins-groq==1.4.4
 livekit-plugins-silero==1.4.4
-livekit-plugins-turn-detector==1.4.4        
+livekit-plugins-turn-detector==1.4.4
 hume==0.13.10
 asyncpg>=0.30.0
 bcrypt>=4.2.0
@@ -16,3 +16,11 @@ PyJWT>=2.9.0
 email-validator>=2.1.0
 pgvector
 sentence-transformers
+langchain-core
+langchain-groq
+langgraph
+langgraph-checkpoint
+langgraph-checkpoint-postgres
+langgraph-prebuilt
+langgraph-sdk
+langsmith
