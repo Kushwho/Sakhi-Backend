@@ -317,18 +317,18 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         else:
             logger.debug(f'🎤 child (partial): "{ev.transcript}"')
 
-    @session.on("conversation_item_added")
-    def _on_conversation_item(ev: ConversationItemAddedEvent) -> None:
-        if not isinstance(ev.item, llm.ChatMessage):
-            return
-        role = ev.item.role
-        text = ev.item.text_content or "(no text)"
-        if role == "assistant":
-            logger.info(f'🤖 SAKHI SAID: "{text[:200]}"')
-        elif role == "user":
-            logger.info(f'💬 USER TURN COMMITTED: "{text[:200]}"')
-        else:
-            logger.debug(f'📝 {role}: "{text[:100]}"')
+    # @session.on("conversation_item_added")
+    # def _on_conversation_item(ev: ConversationItemAddedEvent) -> None:
+    #     if not isinstance(ev.item, llm.ChatMessage):
+    #         return
+    #     role = ev.item.role
+    #     text = ev.item.text_content or "(no text)"
+    #     if role == "assistant":
+    #         logger.info(f'🤖 SAKHI SAID: "{text[:200]}"')
+    #     elif role == "user":
+    #         logger.info(f'💬 USER TURN COMMITTED: "{text[:200]}"')
+    #     else:
+    #         logger.debug(f'📝 {role}: "{text[:100]}"')
 
     # ─────────────────────────────────────────────────────────────────
 

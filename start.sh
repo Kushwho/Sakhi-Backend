@@ -33,8 +33,8 @@ sleep 30
 
 # Now start the FastAPI token server in the background
 # By this point the agents are registered and ready to accept dispatches
-echo "Starting FastAPI on port 8000..."
-python -m uvicorn api.routes:app --host 0.0.0.0 --port 8000 &
+echo "Starting FastAPI on port 8000 using run.py..."
+python run.py &
 FASTAPI_PID=$!
 
 # Wait for any process to exit
