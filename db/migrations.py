@@ -113,19 +113,19 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_alerts_profile
         ON alerts(profile_id, recorded_at DESC);
     """,
-
     # ------- pgvector extension -------
     """
     CREATE EXTENSION IF NOT EXISTS vector;
     """,
     # ------- memories (long-term memory store) -------
+    # NOTE: 384-dim — matches all-MiniLM-L6-v2 via sentence-transformers
     """
     CREATE TABLE IF NOT EXISTS memories (
         id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         profile_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
         service     TEXT NOT NULL DEFAULT 'sakhi',
         content     TEXT NOT NULL,
-        embedding   vector(768),
+        embedding   vector(384),
         metadata    JSONB DEFAULT '{}',
         strength    REAL NOT NULL DEFAULT 1.0,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -218,7 +218,35 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_gentype_cache_key
         ON gentype_cache(cache_key);
     """,
+    # ------- stories (Story Narration Agent) -------
+    """
+    CREATE TABLE IF NOT EXISTS stories (
+        id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title          TEXT NOT NULL,
+        genre          TEXT NOT NULL DEFAULT 'general',
+        age_min        INT NOT NULL DEFAULT 4,
+        age_max        INT NOT NULL DEFAULT 12,
+        language       TEXT NOT NULL DEFAULT 'English',
+        total_segments INT NOT NULL DEFAULT 1,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    # ------- story_segments -------
+    """
+    CREATE TABLE IF NOT EXISTS story_segments (
+        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        story_id   UUID NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+        position   INT NOT NULL,
+        content    TEXT NOT NULL,
+        UNIQUE(story_id, position)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_story_segments_lookup
+        ON story_segments(story_id, position);
+    """,
 ]
+
 
 # ---------------------------------------------------------------------------
 # Seed prompts — inserted idempotently after table creation
@@ -348,56 +376,6 @@ SEED_PROMPTS = [
             '"discussion_starters": ["question1", "question2", "question3"]}}'
         ),
     },
-    # ------- stories (Story Narration Agent) -------
-    """
-    CREATE TABLE IF NOT EXISTS stories (
-        id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        title          TEXT NOT NULL,
-        genre          TEXT NOT NULL DEFAULT 'general',
-        age_min        INT NOT NULL DEFAULT 4,
-        age_max        INT NOT NULL DEFAULT 12,
-        language       TEXT NOT NULL DEFAULT 'English',
-        total_segments INT NOT NULL DEFAULT 1,
-        created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    """,
-    # ------- story_segments -------
-    """
-    CREATE TABLE IF NOT EXISTS story_segments (
-        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        story_id   UUID NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
-        position   INT NOT NULL,
-        content    TEXT NOT NULL,
-        UNIQUE(story_id, position)
-    );
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_story_segments_lookup
-        ON story_segments(story_id, position);
-    """,
-    # ------- pgvector extension -------
-    """
-    CREATE EXTENSION IF NOT EXISTS vector;
-    """,
-    # ------- memories (long-term memory store) -------
-    """
-    CREATE TABLE IF NOT EXISTS memories (
-        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        profile_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-        service     TEXT NOT NULL DEFAULT 'sakhi',
-        content     TEXT NOT NULL,
-        embedding   vector(384),
-        metadata    JSONB DEFAULT '{}',
-        strength    REAL NOT NULL DEFAULT 1.0,
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    """,
-    # ------- memory indexes -------
-    """
-    CREATE INDEX IF NOT EXISTS idx_memories_namespace
-        ON memories(service, profile_id);
-    """,
 ]
 
 
