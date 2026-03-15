@@ -56,7 +56,7 @@ Analyze the conversation and return a JSON object with exactly these fields:
 2. "mood_summary": One sentence describing the child's overall emotional state during \
 the session (e.g. "Mostly happy and curious, with brief frustration during math problems").
 
-3. "alerts": A list of objects with {{title, description, severity}} for any concerning \
+3. "alerts": A list of objects with {{"title": ..., "description": ..., "severity": ...}} for any concerning \
 content. Severity must be "info", "warning", or "critical". Look for:
    - References to bullying, self-harm, violence, or abuse
    - Sustained sadness, anxiety, or fear
@@ -173,6 +173,20 @@ async def summarize_session(
         f"duration={duration_secs}s, topics={summary.get('topics')}, "
         f"alerts={len(summary.get('alerts', []))}"
     )
+
+    # Extract and store long-term memories (background, non-blocking)
+    try:
+        from services.memory_manager import MemoryManager
+
+        memory_mgr = MemoryManager()
+        memories_stored = await memory_mgr.extract_and_store(
+            profile_id=profile_id,
+            service="sakhi",
+            transcript=transcript,
+        )
+        logger.info(f"Long-term memories stored: {len(memories_stored)} items")
+    except Exception as e:
+        logger.warning(f"Memory extraction failed (non-blocking): {e}")
 
     return {
         "session_id": str(session_id),
