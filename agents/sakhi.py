@@ -86,6 +86,7 @@ class SakhiAgent(Agent):
         child_name: str = "a child",
         child_age: int = 8,
         child_language: str = "English",
+        profile_id: str | None = None,
         chat_ctx: ChatContext | None = None,
     ) -> None:
         instructions = SAKHI_SYSTEM_PROMPT.format(
@@ -97,7 +98,15 @@ class SakhiAgent(Agent):
         self.child_name = child_name
         self.child_age = child_age
         self.child_language = child_language
+        self._profile_id = profile_id
         self._current_emotion: str | None = None
+        # One shared instance per session — DB pool and embedding model
+        # are created lazily on first use and reused across all turns.
+        if profile_id:
+            from services.memory_manager import MemoryManager
+            self._memory_mgr: MemoryManager | None = MemoryManager()
+        else:
+            self._memory_mgr = None
 
     # -- Short-term memory: inject emotion context before LLM responds -------
 
@@ -141,6 +150,29 @@ class SakhiAgent(Agent):
                     f"Never reveal that you are detecting their emotions."
                 ),
             )
+
+        # Recall relevant long-term memories based on what the child said
+        if self._memory_mgr and self._profile_id and new_message.text_content:
+            try:
+                relevant = await self._memory_mgr.recall(
+                    profile_id=self._profile_id,
+                    service="sakhi",
+                    query=new_message.text_content,
+                    limit=3,
+                )
+                if relevant:
+                    turn_ctx.add_message(
+                        role="system",
+                        content=(
+                            f"[Long-term memory — DO NOT read aloud] "
+                            f"You remember these things about {self.child_name}: "
+                            + "; ".join(relevant)
+                            + ". Use this to personalize your response naturally."
+                        ),
+                    )
+                    logger.info(f"Injected {len(relevant)} memories into turn context")
+            except Exception as e:
+                logger.warning(f"Memory recall during turn failed: {e}")
 
     # -- Tool 1: Explain a concept (RAG stub) --------------------------------
 
@@ -234,6 +266,33 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         ),
     )
 
+    # Recall long-term memories for this child at session start
+    if profile_id:
+        try:
+            from services.memory_manager import MemoryManager
+
+            memory_mgr = MemoryManager()
+            past_memories = await memory_mgr.recall(
+                profile_id=profile_id,
+                service="sakhi",
+                query=child_name,
+                limit=5,
+            )
+            if past_memories:
+                initial_ctx.add_message(
+                    role="system",
+                    content=(
+                        f"[Long-term memory — DO NOT read aloud] "
+                        f"From previous conversations with {child_name}, you remember: "
+                        + "; ".join(past_memories)
+                        + ". Use these naturally — don't list them, just let them "
+                        f"inform how you talk to {child_name}."
+                    ),
+                )
+                logger.info(f"Injected {len(past_memories)} memories into session start context")
+        except Exception as e:
+            logger.warning(f"Memory recall at session start failed: {e}")
+
     # Build the voice pipeline
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -278,6 +337,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         child_name=child_name,
         child_age=child_age,
         child_language=child_language,
+        profile_id=profile_id,
         chat_ctx=initial_ctx,
     )
 
