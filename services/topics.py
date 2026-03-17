@@ -10,6 +10,7 @@ from typing import Any
 
 TOPICS: list[dict[str, Any]] = [
     # ── Science ──────────────────────────────────────────────────────
+
     {
         "id": "science-photosynthesis",
         "title": "How Plants Make Food",
@@ -368,13 +369,14 @@ TOPICS: list[dict[str, Any]] = [
         "category": "Environment",
         "age_range": [5, 11],
         "tags": ["bees", "pollination", "nature", "environment"],
-    },
+    }
 ]
 
 
 def get_topics_for_age(age: int) -> list[dict[str, Any]]:
     """Return all topics whose age range includes the given age."""
     return [t for t in TOPICS if t["age_range"][0] <= age <= t["age_range"][1]]
+
 
 
 def get_topic_by_id(topic_id: str) -> dict[str, Any] | None:

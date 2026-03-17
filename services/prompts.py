@@ -55,6 +55,7 @@ _DEFAULT_PROMPTS: dict[str, str] = {
         "2. Ask a thought-provoking question back before explaining\n"
         "3. Connect their question to something they might already know\n"
         '4. End with "What do you think?" or a follow-up wonder question\n\n'
+
         "Never lecture. Keep it conversational and wonder-driven."
     ),
     "curious_topic": (
@@ -136,6 +137,7 @@ async def load_prompts(pool: asyncpg.Pool) -> None:
     """Load active prompt templates from the database, overwriting defaults."""
     global _prompt_cache
     async with pool.acquire() as conn:
+
         rows = await conn.fetch("SELECT mode, prompt_template FROM system_prompts WHERE is_active = true")
     # Start from defaults, then overlay DB values
     _prompt_cache = dict(_DEFAULT_PROMPTS)

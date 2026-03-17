@@ -364,7 +364,6 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         greeting_instructions = (
             f"Greet {child_name} warmly by name. You are excited to talk to them today! Keep it to 1-2 short sentences."
         )
-
     await session.generate_reply(instructions=greeting_instructions)
     logger.info(f"Initial greeting sent (mode={mode})")
 

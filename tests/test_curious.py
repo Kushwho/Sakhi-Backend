@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from services.prompts import _prompt_cache, build_system_prompt
 from services.topics import get_topic_by_id, get_topics_for_age, get_topics_response
 
+
 # ---------------------------------------------------------------------------
 # Prompt assembly tests
 # ---------------------------------------------------------------------------
@@ -205,7 +206,6 @@ class TestCuriousEndpoints:
         mock_auth.return_value = {"profile_id": "test-id", "profile_type": "child"}
         mock_profile.return_value = {"display_name": "Test", "age": 8}
 
-        # Override the dependency
         from api.dependencies import require_profile_token
         from api.routes import app
 
@@ -299,6 +299,5 @@ class TestChatModePassthrough:
     def test_end_session_request_accepts_mode(self):
         from api.chat_routes import EndSessionRequest
 
-        # There are two EndSessionRequest definitions; get the one with mode
         req = EndSessionRequest(thread_id="abc-123", mode="curious_open")
         assert req.mode == "curious_open"
