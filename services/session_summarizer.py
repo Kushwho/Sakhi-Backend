@@ -86,6 +86,7 @@ async def summarize_session(
     ended_at: datetime,
     transcript: list[dict],
     turn_count: int,
+    mode: str = "default",
 ) -> dict:
     """Summarize a completed session and persist results to the database.
 
@@ -96,6 +97,7 @@ async def summarize_session(
         ended_at: Session end timestamp.
         transcript: List of {role, text} dicts from ChatContext.
         turn_count: Number of conversation turns.
+        mode: Session mode (e.g. "default", "curious_open", "curious_topic").
 
     Returns:
         The session_summary dict that was written to the database.
@@ -127,8 +129,8 @@ async def summarize_session(
             """
             INSERT INTO session_summaries
                 (profile_id, room_name, started_at, ended_at, duration_secs,
-                 mood_summary, topics, turn_count, transcript)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 mood_summary, topics, turn_count, transcript, mode)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
             """,
             uuid.UUID(profile_id),
@@ -140,6 +142,7 @@ async def summarize_session(
             json.dumps(summary.get("topics", [])),
             turn_count,
             json.dumps(transcript),
+            mode,
         )
         session_id = session_row["id"]
 
