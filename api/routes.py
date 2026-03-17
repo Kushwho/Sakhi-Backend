@@ -28,10 +28,12 @@ from db.migrations import run_migrations
 from api.auth_routes import router as auth_router
 from api.dashboard_routes import router as dashboard_router
 from api.chat_routes import router as chat_router
+from api.curious_routes import router as curious_router, curio_router
 from api.dependencies import require_profile_token
 from services.profiles import get_current_profile
 from services.checkpointer import init_checkpointer, close_checkpointer
 from services.chat_graph import build_chat_graph
+from services.prompts import load_prompts
 from utils.logging_config import setup_logging
 
 setup_logging()
@@ -45,6 +47,7 @@ async def lifespan(app: FastAPI):
     pool = await init_pool()
     await run_migrations(pool)
     logger.info("Database initialized and migrations applied")
+    await load_prompts(pool)
     await init_checkpointer()
     build_chat_graph()
     logger.info("LangGraph chat pipeline ready")
@@ -67,6 +70,15 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(chat_router)
+app.include_router(curious_router)
+app.include_router(curio_router)
+
+
+class TokenRequest(BaseModel):
+    """Optional request body for LiveKit token generation."""
+    mode: str = "default"
+    topic_id: str | None = None
+    surprise_fact: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -84,7 +96,7 @@ async def health_check():
 
 
 @app.post("/api/token", response_model=TokenResponse)
-async def create_token(claims: dict = Depends(require_profile_token)):
+async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depends(require_profile_token)):
     """Generate a LiveKit room token for an authenticated child session.
 
     Requires a valid profile token (child type) in the Authorization header.
@@ -111,13 +123,24 @@ async def create_token(claims: dict = Depends(require_profile_token)):
     # Each child gets a unique room
     room_name = f"sakhi-{child_name.lower().replace(' ', '-')}-{int(time.time())}"
 
-    # Room metadata carries child profile for the agent to read
+    # Resolve topic context if needed
+    topic_context = None
+    if req.mode == "curious_topic" and req.topic_id:
+        from services.topics import get_topic_by_id
+        topic = get_topic_by_id(req.topic_id)
+        if topic:
+            topic_context = {"title": topic["title"], "description": topic["description"]}
+
+    # Room metadata carries child profile + mode context for the agent to read
     room_metadata = json.dumps(
         {
             "child_name": child_name,
             "child_age": child_age,
             "child_language": "English",
             "profile_id": claims["profile_id"],
+            "mode": req.mode,
+            "topic_context": topic_context,
+            "surprise_fact": req.surprise_fact,
         }
     )
 

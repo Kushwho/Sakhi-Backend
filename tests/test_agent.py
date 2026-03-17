@@ -12,7 +12,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.sakhi import (
-    SAKHI_SYSTEM_PROMPT,
     VALID_EXPRESSIONS,
     SakhiAgent,
 )
