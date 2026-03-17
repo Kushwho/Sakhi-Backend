@@ -31,6 +31,7 @@ from livekit.agents.voice.events import (
 from livekit.plugins import deepgram, groq, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from services.prompts import build_system_prompt
 from utils.logging_config import setup_logging
 
 load_dotenv(".env.local")
@@ -45,30 +46,6 @@ logger = logging.getLogger("sakhi")
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-SAKHI_SYSTEM_PROMPT = """\
-You are Sakhi, a warm, curious, and encouraging AI companion for Indian children aged 4–12.
-
-Personality:
-- You are playful, patient, and full of wonder.
-- You celebrate small wins enthusiastically.
-- You speak in short, simple sentences appropriate for children.
-- You are strictly child-safe — no violence, no inappropriate content, ever.
-
-Teaching style:
-- You NEVER give direct homework answers.
-- You use Socratic questioning — ask guiding questions to help children discover answers themselves.
-- When explaining concepts, use fun analogies, stories, and examples from everyday Indian life.
-
-Conversation style:
-- Keep responses concise (2-3 sentences max for young children, up to 4-5 for older ones).
-- Use a cheerful, expressive tone.
-- If the child seems confused, simplify and try a different approach.
-- If the child seems sad or upset, be empathetic and supportive.
-
-You are currently talking to {child_name}, who is {child_age} years old and prefers {child_language}.
-Adjust your vocabulary and complexity to match their age.\
-"""
 
 VALID_EXPRESSIONS = {"happy", "thinking", "excited", "concerned", "sad", "celebrating"}
 
@@ -88,11 +65,17 @@ class SakhiAgent(Agent):
         child_language: str = "English",
         profile_id: str | None = None,
         chat_ctx: ChatContext | None = None,
+        mode: str = "default",
+        topic_context: dict | None = None,
+        surprise_fact: str | None = None,
     ) -> None:
-        instructions = SAKHI_SYSTEM_PROMPT.format(
+        instructions = build_system_prompt(
             child_name=child_name,
             child_age=child_age,
             child_language=child_language,
+            mode=mode,
+            topic=topic_context,
+            surprise_fact=surprise_fact,
         )
         super().__init__(instructions=instructions, chat_ctx=chat_ctx)
         self.child_name = child_name
@@ -219,24 +202,31 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     """Entrypoint for each child voice session."""
     logger.info("━━━ New Sakhi session starting ━━━")
 
-    # Default fallback values (overwritten by participant metadata below)
+    # Default fallback values (overwritten by room metadata below)
     child_name = "buddy"
     child_age = 8
     child_language = "English"
     profile_id = None
+    mode = "default"
+    topic_context = None
+    surprise_fact = None
 
     # Connect the agent to the LiveKit room
     await ctx.connect()
     logger.info(f"Connected to room: {ctx.room.name}")
 
-    # Extract profile_id from room metadata
+    # Extract profile and mode info from room metadata
     try:
         room_meta = json.loads(ctx.room.metadata or "{}")
         profile_id = room_meta.get("profile_id")
+        mode = room_meta.get("mode", "default")
+        topic_context = room_meta.get("topic_context")
+        surprise_fact = room_meta.get("surprise_fact")
         if profile_id:
             logger.info(f"Profile ID for session tracking: {profile_id}")
+        logger.info(f"Session mode: {mode}")
     except json.JSONDecodeError:
-        logger.warning("Could not parse room metadata for profile_id")
+        logger.warning("Could not parse room metadata")
 
     # Wait for the child participant to connect
     await ctx.wait_for_participant()
@@ -339,6 +329,9 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         child_language=child_language,
         profile_id=profile_id,
         chat_ctx=initial_ctx,
+        mode=mode,
+        topic_context=topic_context,
+        surprise_fact=surprise_fact,
     )
 
     # Start the session
@@ -348,12 +341,33 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     )
     logger.info("Session started — voice pipeline active")
 
-    # Greet the child
-    await session.generate_reply(
-        instructions=f"Greet {child_name} warmly by name. "
-        f"You are excited to talk to them today! Keep it to 1-2 short sentences."
-    )
-    logger.info("Initial greeting sent")
+    # Greet the child (mode-aware)
+    if mode == "curious_topic" and topic_context:
+        greeting_instructions = (
+            f"Greet {child_name} warmly by name and tell them you're excited to explore "
+            f"{topic_context['title']} together! Ask what they already know about it. "
+            f"Keep it to 2-3 short sentences."
+        )
+    elif mode == "curious_surprise" and surprise_fact:
+        greeting_instructions = (
+            f"Greet {child_name} warmly by name and share this amazing fact: "
+            f"\"{surprise_fact}\" — then ask what they think about it! "
+            f"Keep it to 2-3 short sentences."
+        )
+    elif mode == "curious_open":
+        greeting_instructions = (
+            f"Greet {child_name} warmly by name. Tell them you're ready to explore "
+            f"anything they're curious about today! Ask what they'd like to discover. "
+            f"Keep it to 1-2 short sentences."
+        )
+    else:
+        greeting_instructions = (
+            f"Greet {child_name} warmly by name. "
+            f"You are excited to talk to them today! Keep it to 1-2 short sentences."
+        )
+
+    await session.generate_reply(instructions=greeting_instructions)
+    logger.info(f"Initial greeting sent (mode={mode})")
 
     # ── Wait for session end and summarize ────────────────────────────
     # The session runs until the room closes or the child disconnects.
@@ -395,6 +409,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
                 ended_at=session_ended_at,
                 transcript=transcript,
                 turn_count=turn_count,
+                mode=mode,
             )
             logger.info(f"Session summary saved: {result}")
 

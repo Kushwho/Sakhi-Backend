@@ -38,6 +38,9 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 class ChatSendRequest(BaseModel):
     message: str
     thread_id: str | None = None
+    mode: str = "default"           # "default" | "curious_open" | "curious_topic" | "curious_surprise"
+    topic_id: str | None = None     # for curious_topic mode
+    surprise_fact: str | None = None  # for curious_surprise mode
 
 
 class ChatHistoryRequest(BaseModel):
@@ -107,12 +110,23 @@ async def chat_send(req: ChatSendRequest, claims: dict = Depends(require_profile
 
     thread_id = req.thread_id or str(uuid.uuid4())
 
+    # Resolve topic context if a topic_id is provided
+    topic_context = None
+    if req.mode == "curious_topic" and req.topic_id:
+        from services.topics import get_topic_by_id
+        topic = get_topic_by_id(req.topic_id)
+        if topic:
+            topic_context = {"title": topic["title"], "description": topic["description"]}
+
     config = {
         "configurable": {
             "thread_id": thread_id,
             "child_name": child_name,
             "child_age": child_age,
             "child_language": child_language,
+            "mode": req.mode,
+            "topic_context": topic_context,
+            "surprise_fact": req.surprise_fact,
         }
     }
 
@@ -166,6 +180,7 @@ async def chat_history(req: ChatHistoryRequest, claims: dict = Depends(require_p
 
 class EndSessionRequest(BaseModel):
     thread_id: str
+    mode: str = "default"
 
 
 @router.post("/end")
@@ -194,6 +209,7 @@ async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(requir
             ended_at=datetime.utcnow(),
             transcript=transcript,
             turn_count=turn_count,
+            mode=req.mode,
         )
         return {"status": "success", "summary": result}
 
