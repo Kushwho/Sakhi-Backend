@@ -261,10 +261,11 @@ async def start_curio_activity(
 
     # ── GenType ──────────────────────────────────────────────────────────────
     if activity_id == "gentype":
+        from services.image_gen import get_themes
         return {
             "activity_id": activity_id,
             "mode": "curio_gentype",
-            "context": {},
+            "context": {"themes": get_themes()},
         }
 
     # Fallback (shouldn't reach here given catalog check above)
