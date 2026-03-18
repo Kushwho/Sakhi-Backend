@@ -64,7 +64,7 @@ async def submit_attempt(
 
     Flow:
     1. Fetch seed image URL from DB using image_id (FK → swys_images).
-    2. Generate a new image from kid_prompt via Replicate flux-1.1-pro.
+    2. Generate a new image from kid_prompt via Replicate flux-schnell.
     3. Judge both images with a Groq vision LLM → score (0-100) + hint.
     4. Persist the attempt and return the full result.
     """

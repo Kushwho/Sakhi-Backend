@@ -166,7 +166,7 @@ Levels 1-2 have 2 images each so `ORDER BY RANDOM()` gives different kids differ
 ### Image Generation
 
 Delegates to `SakhiLLM.generate_image()` in `services/llm.py`.
-- **Model:** `black-forest-labs/flux-1.1-pro` (configurable via `SAKHI_IMAGE_MODEL` env var)
+- **Model:** `black-forest-labs/flux-schnell` (configurable via `SAKHI_IMAGE_MODEL` env var)
 - **Provider:** Replicate (async via `replicate.async_run()`)
 - **Output:** 1024x1024, webp format, quality 80
 - **Returns:** Public URL (Replicate delivery URL, expires ~1 hour)
@@ -352,7 +352,7 @@ All three features use `services/llm.py` as the single point of contact for exte
 |--------|----------|-------|---------|
 | `generate_json(prompt, system_prompt?, temperature?, max_tokens?)` | Groq | `llama-3.1-8b-instant` | Thinking surprise, session summarizer, memory extraction |
 | `vision_json(image_urls, prompt, system_prompt?, model?)` | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` | SWYS judge |
-| `generate_image(prompt, model?, width?, height?, output_format?)` | Replicate | `black-forest-labs/flux-1.1-pro` | SWYS seed images, GenType letters |
+| `generate_image(prompt, model?, width?, height?, output_format?)` | Replicate | `black-forest-labs/flux-schnell` | SWYS seed images, GenType letters |
 | `get_langchain_chat_model()` | Groq (LangChain) | `llama-3.1-8b-instant` | LangGraph text chat pipeline |
 
 **Singleton pattern:** `get_llm_client()` returns a lazy singleton. The client is not instantiated at import time to avoid breaking test collection when API keys are not set (uses `"dummy_key_for_tests"` fallback).
@@ -360,7 +360,7 @@ All three features use `services/llm.py` as the single point of contact for exte
 **Model overrides via env vars:**
 - `SAKHI_DEFAULT_LLM_MODEL` -- text LLM (default: `llama-3.1-8b-instant`)
 - `SAKHI_VISION_MODEL` -- vision LLM (default: `meta-llama/llama-4-scout-17b-16e-instruct`)
-- `SAKHI_IMAGE_MODEL` -- image gen model (default: `black-forest-labs/flux-1.1-pro`)
+- `SAKHI_IMAGE_MODEL` -- image gen model (default: `black-forest-labs/flux-schnell`)
 
 ---
 
@@ -484,5 +484,5 @@ The base prompt is always included. Mode `"default"` uses base only. All other m
 | `REPLICATE_API_TOKEN` | Image generation (SWYS, GenType) | Required |
 | `SAKHI_DEFAULT_LLM_MODEL` | Text LLM model | `llama-3.1-8b-instant` |
 | `SAKHI_VISION_MODEL` | Vision LLM model | `meta-llama/llama-4-scout-17b-16e-instruct` |
-| `SAKHI_IMAGE_MODEL` | Replicate image model | `black-forest-labs/flux-1.1-pro` |
+| `SAKHI_IMAGE_MODEL` | Replicate image model | `black-forest-labs/flux-schnell` |
 | `DATABASE_URL` | All DB operations | Required |

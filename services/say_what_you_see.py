@@ -22,9 +22,13 @@ JUDGE_SYSTEM_PROMPT = (
 )
 
 JUDGE_PROMPT_TEMPLATE = (
-    "A child was shown Image 1 and tried to recreate it by writing this prompt: \"{kid_prompt}\".\n"
-    "Image 2 is what was generated from that prompt.\n\n"
-    "Compare Image 1 and Image 2 carefully.\n"
+    "A child is playing a game where they describe an image using words, "
+    "and we generate a new image from their description.\n\n"
+    "The child wrote this prompt: \"{kid_prompt}\"\n\n"
+    "Below you will see two images:\n"
+    "- FIRST image: The ORIGINAL image the child was trying to describe\n"
+    "- SECOND image: The image GENERATED from the child's prompt\n\n"
+    "Compare them carefully.\n"
     "1. Score how similar they are from 0 to 100 (100 = almost identical scene/subject/mood).\n"
     "2. Write a short, encouraging hint (1-2 sentences, child-friendly) telling the child what "
     "they could add or change in their description to get a higher score next time.\n\n"
@@ -119,14 +123,36 @@ async def judge_attempt(
     llm = get_llm_client()
     prompt = JUDGE_PROMPT_TEMPLATE.format(kid_prompt=kid_prompt)
 
+    logger.info(f"Judging: original={original_url[:80]}, generated={generated_url[:80]}")
     try:
-        result = await llm.vision_json(
-            image_urls=[original_url, generated_url],
-            prompt=prompt,
-            system_prompt=JUDGE_SYSTEM_PROMPT,
+        import json as _json
+        from groq import AsyncGroq
+        import os
+
+        client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        user_content = [
+            {"type": "text", "text": prompt},
+            {"type": "text", "text": "ORIGINAL image (the one the child was shown):"},
+            {"type": "image_url", "image_url": {"url": original_url}},
+            {"type": "text", "text": "GENERATED image (created from the child's prompt):"},
+            {"type": "image_url", "image_url": {"url": generated_url}},
+        ]
+
+        messages = [
+            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+
+        response = await client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=messages,
             temperature=0.2,
             max_tokens=200,
+            response_format={"type": "json_object"},
         )
+        result = _json.loads(response.choices[0].message.content)
+        logger.info(f"Vision LLM raw result: {result}")
         score = max(0, min(100, int(result.get("score", 50))))
         hint = result.get("hint", "Keep trying -- you're doing great!")
         logger.info(f"Judge result: score={score}")

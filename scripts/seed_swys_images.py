@@ -26,7 +26,7 @@ from db.migrations import run_migrations
 
 load_dotenv(".env.local")
 
-REPLICATE_MODEL = "black-forest-labs/flux-1.1-pro"
+REPLICATE_MODEL = "black-forest-labs/flux-schnell"
 
 SEED_IMAGES = [
     # --- Level 1: single object, plain background ---
@@ -93,7 +93,8 @@ async def generate_image(prompt: str, retries: int = 3) -> str:
                     "output_quality": 80,
                 },
             )
-            return str(output)
+            item = output[0] if isinstance(output, list) else output
+            return item.url() if hasattr(item, "url") and callable(item.url) else str(item)
         except Exception as e:
             if "429" in str(e) and attempt < retries - 1:
                 wait = 15 * (attempt + 1)
