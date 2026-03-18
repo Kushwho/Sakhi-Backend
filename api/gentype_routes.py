@@ -174,19 +174,21 @@ async def spell_name(
         for letter in unique_letters:
             cache_results[letter] = await _get_cached(conn, f"{req.theme_id}:{letter}")
 
-    # Generate uncached letters in parallel
-    async def _generate_one(letter: str) -> dict:
+    # Generate uncached letters sequentially (Replicate rate limit: burst of 1)
+    uncached = [l for l in unique_letters if cache_results[l] is None]
+    generated: list[dict] = []
+    llm = get_llm_client()
+    for i, letter in enumerate(uncached):
         prompt = build_letter_prompt(letter, req.theme_id)
         try:
-            llm = get_llm_client()
             url = await llm.generate_image(prompt)
-            return {"letter": letter, "image_url": url, "from_cache": False, "error": None}
+            generated.append({"letter": letter, "image_url": url, "from_cache": False, "error": None})
         except Exception as e:
             logger.error(f"GenType spell-name failed for {letter}: {e}", exc_info=True)
-            return {"letter": letter, "image_url": None, "from_cache": False, "error": str(e)}
-
-    uncached = [l for l in unique_letters if cache_results[l] is None]
-    generated = await asyncio.gather(*[_generate_one(l) for l in uncached])
+            generated.append({"letter": letter, "image_url": None, "from_cache": False, "error": str(e)})
+        # Respect Replicate rate limit (6 req/min, burst 1, resets ~10s)
+        if i < len(uncached) - 1:
+            await asyncio.sleep(12)
     gen_map = {r["letter"]: r for r in generated}
 
     # Cache successful generations

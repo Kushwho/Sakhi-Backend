@@ -22,7 +22,7 @@ logger = logging.getLogger("sakhi.llm")
 # Default models
 DEFAULT_MODEL = os.getenv("SAKHI_DEFAULT_LLM_MODEL", "llama-3.1-8b-instant")
 DEFAULT_VISION_MODEL = os.getenv("SAKHI_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-DEFAULT_IMAGE_MODEL = os.getenv("SAKHI_IMAGE_MODEL", "black-forest-labs/flux-1.1-pro")
+DEFAULT_IMAGE_MODEL = os.getenv("SAKHI_IMAGE_MODEL", "black-forest-labs/flux-schnell")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 
@@ -184,7 +184,10 @@ class SakhiLLM:
             )
             if output is None:
                 raise RuntimeError("Replicate returned no output")
-            url = str(output) if not isinstance(output, str) else output
+            # Replicate returns a list of FileOutput objects.
+            # Each FileOutput has a .url() method that returns the CDN URL.
+            item = output[0] if isinstance(output, list) else output
+            url = item.url() if hasattr(item, "url") and callable(item.url) else str(item)
             logger.info(f"Image generated: {url[:80]}")
             return url
         except Exception as e:
