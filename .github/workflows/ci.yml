@@ -28,6 +28,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
+      PYTHONPATH: .
       GROQ_API_KEY: fake-ci-key
       JWT_SECRET: fake-ci-secret
       DATABASE_URL: postgresql://fake:fake@localhost:5432/fakedb
