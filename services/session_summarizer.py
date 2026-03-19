@@ -39,6 +39,7 @@ async def _get_pool() -> asyncpg.Pool | None:
         logger.info("Session summarizer DB pool created")
     return _db_pool
 
+
 # ---------------------------------------------------------------------------
 # Summarization Prompt
 # ---------------------------------------------------------------------------
@@ -254,13 +255,13 @@ async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
     """Make a single LLM call to extract topics, mood, and alerts."""
     try:
         from services.llm import get_llm_client
+
         llm = get_llm_client()
 
         prompt = SUMMARIZE_PROMPT.format(
             transcript=transcript_text,
             emotions=emotions_text,
         )
-
 
         result = await llm.generate_json(
             prompt=prompt,
@@ -276,10 +277,7 @@ async def _call_llm(transcript_text: str, emotions_text: str) -> dict:
         if "alerts" not in result:
             result["alerts"] = []
 
-        logger.info(
-            f"LLM summarization complete: "
-            f"{len(result['topics'])} topics, {len(result['alerts'])} alerts"
-        )
+        logger.info(f"LLM summarization complete: {len(result['topics'])} topics, {len(result['alerts'])} alerts")
         return result
 
     except Exception as e:

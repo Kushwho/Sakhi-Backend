@@ -97,9 +97,7 @@ async def enter_profile(
                 raise ValueError("Incorrect password")
 
         # Issue a profile token
-        profile_token, jti, expires_at = create_profile_token(
-            account_id, profile_id, profile["type"]
-        )
+        profile_token, jti, expires_at = create_profile_token(account_id, profile_id, profile["type"])
 
         # Record the profile session
         await conn.execute(
@@ -126,7 +124,7 @@ async def exit_profile(token_jti: str) -> None:
     pool = get_pool()
 
     async with pool.acquire() as conn:
-        result = await conn.execute(
+        await conn.execute(
             """
             UPDATE sessions SET revoked = true
             WHERE token_jti = $1 AND token_type = 'profile' AND revoked = false

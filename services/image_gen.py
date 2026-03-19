@@ -105,8 +105,7 @@ _THEME_INDEX: dict[str, dict[str, Any]] = {t["id"]: t for t in GENTYPE_THEMES}
 def get_themes() -> list[dict[str, Any]]:
     """Return themes for the frontend picker (without internal flux_style_suffix)."""
     return [
-        {"id": t["id"], "name": t["name"], "emoji": t["emoji"], "description": t["description"]}
-        for t in GENTYPE_THEMES
+        {"id": t["id"], "name": t["name"], "emoji": t["emoji"], "description": t["description"]} for t in GENTYPE_THEMES
     ]
 
 

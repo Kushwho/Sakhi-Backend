@@ -43,9 +43,7 @@ def setup_logging(level: int = logging.DEBUG) -> None:
     logger.addHandler(console)
 
     # ---- File handler (DEBUG+, rotated 5 MB × 3 backups) ----
-    file_handler = RotatingFileHandler(
-        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
+    file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)
