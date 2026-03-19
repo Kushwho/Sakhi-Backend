@@ -1,8 +1,10 @@
 import asyncio
-import httpx
 import uuid
 
+import httpx
+
 BASE_URL = "http://localhost:8000"
+
 
 async def test_chat_stream():
     # Verify server is running
@@ -21,21 +23,18 @@ async def test_chat_stream():
         unique_id = uuid.uuid4().hex[:8]
         email = f"test_chat_{unique_id}@example.com"
         print(f"1. Signing up new account: {email}")
-        resp = await client.post(f"{BASE_URL}/auth/signup", json={
-            "email": email,
-            "password": "password123",
-            "family_name": "TestFamily"
-        })
+        resp = await client.post(
+            f"{BASE_URL}/auth/signup", json={"email": email, "password": "password123", "family_name": "TestFamily"}
+        )
         assert resp.status_code == 201, f"Signup failed: {resp.text}"
         account_token = resp.json()["account_token"]
 
         # 2. Create a Child Profile
         print("2. Creating child profile")
         headers = {"Authorization": f"Bearer {account_token}"}
-        resp = await client.post(f"{BASE_URL}/auth/profiles", json={
-            "display_name": "TestBuddy",
-            "age": 8
-        }, headers=headers)
+        resp = await client.post(
+            f"{BASE_URL}/auth/profiles", json={"display_name": "TestBuddy", "age": 8}, headers=headers
+        )
         assert resp.status_code == 201, f"Create profile failed: {resp.text}"
         profile_id = resp.json()["id"]
 
@@ -48,14 +47,12 @@ async def test_chat_stream():
         # 4. Test Chat Stream
         print("4. Testing Chat Stream with 'Hi Sakhi, what is 2+2?'")
         chat_headers = {"Authorization": f"Bearer {profile_token}"}
-        chat_payload = {
-            "messages": [
-                {"role": "user", "content": "Hi Sakhi, what is 2+2?"}
-            ]
-        }
-        
+        chat_payload = {"messages": [{"role": "user", "content": "Hi Sakhi, what is 2+2?"}]}
+
         # Test the stream endpoint
-        async with client.stream("POST", f"{BASE_URL}/api/chat/stream", json=chat_payload, headers=chat_headers) as response:
+        async with client.stream(
+            "POST", f"{BASE_URL}/api/chat/stream", json=chat_payload, headers=chat_headers
+        ) as response:
             assert response.status_code == 200, f"Chat stream failed: {response.text}"
             print("\nResponse: \n--------------------")
             full_response = ""

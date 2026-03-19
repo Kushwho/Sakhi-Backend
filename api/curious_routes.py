@@ -64,8 +64,16 @@ CURIO_ACTIVITIES: list[dict[str, Any]] = [
 
 # Topic categories used for random selection in surprise mode
 SURPRISE_CATEGORIES = [
-    "Science", "Space", "Nature", "Animals", "Human Body",
-    "Math", "History", "Technology", "Art", "Environment",
+    "Science",
+    "Space",
+    "Nature",
+    "Animals",
+    "Human Body",
+    "Math",
+    "History",
+    "Technology",
+    "Art",
+    "Environment",
 ]
 
 
@@ -125,7 +133,7 @@ async def get_surprise(claims: dict = Depends(require_profile_token)):
         }
     except Exception as e:
         logger.error(f"Surprise fact generation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to generate surprise fact")
+        raise HTTPException(status_code=500, detail="Failed to generate surprise fact") from e
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +157,8 @@ async def get_curio_activities(claims: dict = Depends(require_profile_token)):
 
 class StartActivityRequest(BaseModel):
     # For "thinking" activity only
-    sub_mode: str = "curious_open"   # "curious_open" | "curious_topic" | "curious_surprise"
-    topic_id: str | None = None      # required when sub_mode == "curious_topic"
+    sub_mode: str = "curious_open"  # "curious_open" | "curious_topic" | "curious_surprise"
+    topic_id: str | None = None  # required when sub_mode == "curious_topic"
 
 
 @curio_router.post("/activities/{activity_id}/start")
@@ -187,6 +195,7 @@ async def start_curio_activity(
         if req.sub_mode == "curious_topic":
             if req.topic_id:
                 from services.topics import get_topic_by_id
+
                 topic = get_topic_by_id(req.topic_id)
                 if not topic:
                     raise HTTPException(status_code=404, detail=f"Topic '{req.topic_id}' not found")
@@ -210,6 +219,7 @@ async def start_curio_activity(
         if req.sub_mode == "curious_surprise":
             category = random.choice(SURPRISE_CATEGORIES)
             from services.llm import get_llm_client
+
             llm = get_llm_client()
             template = get_prompt_template("surprise_generator")
             if not template:
@@ -231,7 +241,7 @@ async def start_curio_activity(
                 }
             except Exception as e:
                 logger.error(f"Surprise generation failed: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail="Failed to generate surprise fact")
+                raise HTTPException(status_code=500, detail="Failed to generate surprise fact") from e
 
         # curious_open — no extra context needed
         return {"activity_id": activity_id, "mode": "curious_open", "context": {}}
@@ -242,6 +252,7 @@ async def start_curio_activity(
         if not template:
             raise HTTPException(status_code=500, detail="Scene generator prompt not configured")
         from services.llm import get_llm_client
+
         llm = get_llm_client()
         try:
             result = await llm.generate_json(
@@ -260,11 +271,12 @@ async def start_curio_activity(
             }
         except Exception as e:
             logger.error(f"Scene generation failed: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Failed to generate scene")
+            raise HTTPException(status_code=500, detail="Failed to generate scene") from e
 
     # ── GenType ──────────────────────────────────────────────────────────────
     if activity_id == "gentype":
         from services.image_gen import get_themes
+
         return {
             "activity_id": activity_id,
             "mode": "curio_gentype",

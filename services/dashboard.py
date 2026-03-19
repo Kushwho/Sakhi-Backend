@@ -9,7 +9,7 @@ import json
 import logging
 import uuid
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from db.pool import get_pool
 
@@ -24,7 +24,7 @@ logger = logging.getLogger("sakhi.dashboard")
 async def get_time_spent(profile_id: str, days: int = 7) -> dict:
     """Total minutes and daily breakdown for the last N days."""
     pool = get_pool()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -46,11 +46,13 @@ async def get_time_spent(profile_id: str, days: int = 7) -> dict:
     for r in rows:
         secs = r["total_secs"] or 0
         total_secs += secs
-        daily.append({
-            "date": r["day"].isoformat(),
-            "minutes": round(secs / 60, 1),
-            "sessions": r["session_count"],
-        })
+        daily.append(
+            {
+                "date": r["day"].isoformat(),
+                "minutes": round(secs / 60, 1),
+                "sessions": r["session_count"],
+            }
+        )
 
     return {
         "total_minutes": round(total_secs / 60, 1),
@@ -66,7 +68,7 @@ async def get_time_spent(profile_id: str, days: int = 7) -> dict:
 async def get_mood_summary(profile_id: str, days: int = 7) -> dict:
     """Session mood summaries and aggregated emotion trend."""
     pool = get_pool()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with pool.acquire() as conn:
         # Daily mood summaries from sessions
@@ -97,14 +99,8 @@ async def get_mood_summary(profile_id: str, days: int = 7) -> dict:
         )
 
     return {
-        "summaries": [
-            {"date": r["day"].isoformat(), "mood": r["mood_summary"]}
-            for r in summaries
-        ],
-        "emotion_distribution": [
-            {"emotion": r["emotion"], "count": r["cnt"]}
-            for r in emotion_counts
-        ],
+        "summaries": [{"date": r["day"].isoformat(), "mood": r["mood_summary"]} for r in summaries],
+        "emotion_distribution": [{"emotion": r["emotion"], "count": r["cnt"]} for r in emotion_counts],
     }
 
 
@@ -116,7 +112,7 @@ async def get_mood_summary(profile_id: str, days: int = 7) -> dict:
 async def get_topics_explored(profile_id: str, days: int = 7) -> dict:
     """Top 5 topics explored across all sessions in the last N days."""
     pool = get_pool()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(

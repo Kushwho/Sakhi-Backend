@@ -2,17 +2,16 @@
 Tests for the GenType feature — theme catalog, prompt builder, and API endpoints.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 from services.image_gen import (
-    get_themes,
-    get_theme_by_id,
-    build_letter_prompt,
     GENTYPE_THEMES,
-    _THEME_INDEX,
+    build_letter_prompt,
+    get_theme_by_id,
+    get_themes,
 )
-
 
 # ---------------------------------------------------------------------------
 # Theme catalog tests
@@ -105,14 +104,17 @@ class TestGentypeEndpoints:
 
     @pytest.fixture
     def client(self):
-        from api.routes import app
         from fastapi.testclient import TestClient
+
+        from api.routes import app
+
         return TestClient(app)
 
     @pytest.fixture(autouse=True)
     def override_auth(self):
-        from api.routes import app
         from api.dependencies import require_profile_token
+        from api.routes import app
+
         app.dependency_overrides[require_profile_token] = lambda: {
             "profile_id": "test-profile-id",
             "profile_type": "child",
@@ -141,9 +143,9 @@ class TestGentypeEndpoints:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         mock_pool.return_value.acquire.return_value = mock_ctx
 
-        response = client.post("/api/curio/gentype/generate", json={
-            "theme_id": "space", "letter": "A", "force_regenerate": False
-        })
+        response = client.post(
+            "/api/curio/gentype/generate", json={"theme_id": "space", "letter": "A", "force_regenerate": False}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["from_cache"] is True
@@ -166,36 +168,31 @@ class TestGentypeEndpoints:
 
         mock_llm.return_value.generate_image = AsyncMock(return_value="https://replicate.com/new.webp")
 
-        response = client.post("/api/curio/gentype/generate", json={
-            "theme_id": "space", "letter": "A", "force_regenerate": False
-        })
+        response = client.post(
+            "/api/curio/gentype/generate", json={"theme_id": "space", "letter": "A", "force_regenerate": False}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["from_cache"] is False
         assert data["image_url"] == "https://replicate.com/new.webp"
 
     def test_generate_invalid_letter(self, client):
-        response = client.post("/api/curio/gentype/generate", json={
-            "theme_id": "space", "letter": "123"
-        })
+        response = client.post("/api/curio/gentype/generate", json={"theme_id": "space", "letter": "123"})
         assert response.status_code == 400
 
     def test_generate_invalid_theme(self, client):
-        response = client.post("/api/curio/gentype/generate", json={
-            "theme_id": "nonexistent", "letter": "A"
-        })
+        response = client.post("/api/curio/gentype/generate", json={"theme_id": "nonexistent", "letter": "A"})
         assert response.status_code == 400
 
     def test_parent_token_rejected(self, client):
-        from api.routes import app
         from api.dependencies import require_profile_token
+        from api.routes import app
+
         app.dependency_overrides[require_profile_token] = lambda: {
             "profile_id": "test-id",
             "profile_type": "parent",
         }
-        response = client.post("/api/curio/gentype/generate", json={
-            "theme_id": "space", "letter": "A"
-        })
+        response = client.post("/api/curio/gentype/generate", json={"theme_id": "space", "letter": "A"})
         assert response.status_code == 403
 
     @patch("api.gentype_routes.get_current_profile", new_callable=AsyncMock)
@@ -223,6 +220,6 @@ class TestGentypeEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "Aanya"
-        letters = [l["letter"] for l in data["letters"]]
+        letters = [letter["letter"] for letter in data["letters"]]
         assert letters == ["A", "N", "Y"]
         assert data["has_errors"] is False

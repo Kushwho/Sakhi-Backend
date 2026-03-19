@@ -26,16 +26,16 @@ async def init_checkpointer():
 
     if sys.platform == "win32":
         logger.warning(
-            "Windows detected — using in-memory checkpointer. "
-            "Conversation history will not persist across restarts."
+            "Windows detected — using in-memory checkpointer. Conversation history will not persist across restarts."
         )
         from langgraph.checkpoint.memory import MemorySaver
+
         _checkpointer = MemorySaver()
         return _checkpointer
-    
+
     # Linux / Mac — use full PostgreSQL checkpointer
-    from psycopg_pool import AsyncConnectionPool
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg_pool import AsyncConnectionPool
 
     database_url = os.getenv("DATABASE_URL", "")
     database_url = database_url.replace("&channel_binding=require", "")
@@ -67,9 +67,7 @@ async def init_checkpointer():
 
 def get_checkpointer():
     if _checkpointer is None:
-        raise RuntimeError(
-            "Checkpointer not initialised — call init_checkpointer() first"
-        )
+        raise RuntimeError("Checkpointer not initialised — call init_checkpointer() first")
     return _checkpointer
 
 

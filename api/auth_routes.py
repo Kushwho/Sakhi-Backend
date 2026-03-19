@@ -5,7 +5,6 @@ All /auth/* endpoints for the Netflix-style authentication system.
 """
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
@@ -40,12 +39,12 @@ class LoginRequest(BaseModel):
 
 class CreateChildRequest(BaseModel):
     display_name: str
-    age: Optional[int] = None
-    avatar: Optional[str] = None
+    age: int | None = None
+    avatar: str | None = None
 
 
 class EnterProfileRequest(BaseModel):
-    password: Optional[str] = None
+    password: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +58,7 @@ async def signup(req: SignupRequest):
     try:
         result = await accounts.signup(req.email, req.password, req.family_name)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
 
     return result
 
@@ -73,7 +72,7 @@ async def login(req: LoginRequest):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
-        )
+        ) from None
 
     return result
 
@@ -89,9 +88,7 @@ async def refresh(claims: dict = Depends(require_refresh_token)):
     try:
         result = await accounts.refresh(claims["jti"], claims["sub"])
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from None
 
     return result
 
@@ -143,12 +140,8 @@ async def enter_profile(
     except ValueError as e:
         error_msg = str(e)
         if "password" in error_msg.lower():
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail=error_msg
-            )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=error_msg
-        )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=error_msg) from None
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg) from None
 
     return result
 

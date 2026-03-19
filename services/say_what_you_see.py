@@ -24,7 +24,7 @@ JUDGE_SYSTEM_PROMPT = (
 JUDGE_PROMPT_TEMPLATE = (
     "A child is playing a game where they describe an image using words, "
     "and we generate a new image from their description.\n\n"
-    "The child wrote this prompt: \"{kid_prompt}\"\n\n"
+    'The child wrote this prompt: "{kid_prompt}"\n\n'
     "Below you will see two images:\n"
     "- FIRST image: The ORIGINAL image the child was trying to describe\n"
     "- SECOND image: The image GENERATED from the child's prompt\n\n"
@@ -39,6 +39,7 @@ JUDGE_PROMPT_TEMPLATE = (
 # ---------------------------------------------------------------------------
 # Fetch a random seed image
 # ---------------------------------------------------------------------------
+
 
 async def get_random_image(level: int | None = None) -> dict | None:
     """Return a random active seed image, optionally filtered by difficulty level."""
@@ -99,6 +100,7 @@ async def get_image_by_id(image_id: str) -> dict | None:
 # Generate image via SakhiLLM
 # ---------------------------------------------------------------------------
 
+
 async def generate_image(prompt: str) -> str:
     """Generate an image from the kid's prompt via Replicate (delegates to SakhiLLM)."""
     llm = get_llm_client()
@@ -108,6 +110,7 @@ async def generate_image(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 # Judge: compare original vs generated image
 # ---------------------------------------------------------------------------
+
 
 async def judge_attempt(
     original_url: str,
@@ -120,14 +123,14 @@ async def judge_attempt(
 
     Falls back to {score: 50, hint: "..."} on any error.
     """
-    llm = get_llm_client()
     prompt = JUDGE_PROMPT_TEMPLATE.format(kid_prompt=kid_prompt)
 
     logger.info(f"Judging: original={original_url[:80]}, generated={generated_url[:80]}")
     try:
         import json as _json
-        from groq import AsyncGroq
         import os
+
+        from groq import AsyncGroq
 
         client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
 
@@ -169,6 +172,7 @@ async def judge_attempt(
 # Persist attempt
 # ---------------------------------------------------------------------------
 
+
 async def save_attempt(
     profile_id: str,
     image_id: str,
@@ -209,6 +213,7 @@ async def save_attempt(
 # ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
+
 
 async def get_attempt_history(profile_id: str, limit: int = 10) -> list[dict]:
     """Return the kid's most recent SWYS attempts with image title."""

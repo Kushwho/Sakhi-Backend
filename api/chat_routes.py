@@ -13,8 +13,8 @@ All LLM calls go through the centralized ``SakhiLLM`` layer via a LangGraph
 """
 
 import json
-import uuid
 import logging
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,8 +22,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.dependencies import require_profile_token
-from services.profiles import get_current_profile
 from services.chat_graph import get_chat_graph
+from services.profiles import get_current_profile
 from services.session_summarizer import summarize_session
 
 logger = logging.getLogger("sakhi.api.chat")
@@ -38,8 +38,8 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 class ChatSendRequest(BaseModel):
     message: str
     thread_id: str | None = None
-    mode: str = "default"           # "default" | "curious_open" | "curious_topic" | "curious_surprise"
-    topic_id: str | None = None     # for curious_topic mode
+    mode: str = "default"  # "default" | "curious_open" | "curious_topic" | "curious_surprise"
+    topic_id: str | None = None  # for curious_topic mode
     topic_title: str | None = None  # alternative to topic_id — passed directly from /start context
     topic_description: str | None = None
     surprise_fact: str | None = None  # for curious_surprise mode
@@ -47,11 +47,6 @@ class ChatSendRequest(BaseModel):
 
 class ChatHistoryRequest(BaseModel):
     thread_id: str
-
-
-class EndSessionRequest(BaseModel):
-    thread_id: str
-
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +112,7 @@ async def chat_send(req: ChatSendRequest, claims: dict = Depends(require_profile
     if req.mode == "curious_topic":
         if req.topic_id:
             from services.topics import get_topic_by_id
+
             topic = get_topic_by_id(req.topic_id)
             if topic:
                 topic_context = {"title": topic["title"], "description": topic["description"]}
@@ -149,6 +145,7 @@ async def chat_send(req: ChatSendRequest, claims: dict = Depends(require_profile
 # POST /api/chat/history — retrieve message history for a thread
 # ---------------------------------------------------------------------------
 
+
 @router.post("/history")
 async def chat_history(req: ChatHistoryRequest, claims: dict = Depends(require_profile_token)):
     """Return the full message history for an existing thread.
@@ -169,21 +166,24 @@ async def chat_history(req: ChatHistoryRequest, claims: dict = Depends(require_p
 
         messages = []
         for msg in state.values.get("messages", []):
-            messages.append({
-                "role": msg.type if hasattr(msg, "type") else "unknown",
-                "content": msg.content if hasattr(msg, "content") else str(msg),
-            })
+            messages.append(
+                {
+                    "role": msg.type if hasattr(msg, "type") else "unknown",
+                    "content": msg.content if hasattr(msg, "content") else str(msg),
+                }
+            )
 
         return {"thread_id": req.thread_id, "messages": messages}
 
     except Exception as e:
         logger.error(f"Failed to load chat history: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to load chat history")
+        raise HTTPException(status_code=500, detail="Failed to load chat history") from e
 
 
 # ---------------------------------------------------------------------------
 # POST /api/chat/end — session summarisation (unchanged)
 # ---------------------------------------------------------------------------
+
 
 class EndSessionRequest(BaseModel):
     thread_id: str
@@ -222,4 +222,4 @@ async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(requir
 
     except Exception as e:
         logger.error(f"Failed to end chat session: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to save chat summary")
+        raise HTTPException(status_code=500, detail="Failed to save chat summary") from e

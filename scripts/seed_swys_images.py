@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asyncpg
 import replicate
 from dotenv import load_dotenv
+
 from db.migrations import run_migrations
 
 load_dotenv(".env.local")

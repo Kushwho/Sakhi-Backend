@@ -86,7 +86,7 @@ async def submit_attempt(
         generated_url = await swys_svc.generate_image(req.kid_prompt.strip())
     except RuntimeError as e:
         logger.error(f"Image generation error: {e}")
-        raise HTTPException(status_code=502, detail="Image generation failed. Please try again.")
+        raise HTTPException(status_code=502, detail="Image generation failed. Please try again.") from e
 
     # 3. Judge: compare original vs generated
     judgment = await swys_svc.judge_attempt(original_url, generated_url, req.kid_prompt)

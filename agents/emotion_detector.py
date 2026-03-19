@@ -14,7 +14,6 @@ import logging
 import os
 
 from dotenv import load_dotenv
-
 from livekit import agents, rtc
 from livekit.agents import AgentServer
 
@@ -164,7 +163,7 @@ async def emotion_detector_entrypoint(ctx: agents.JobContext):
                                 logger.info(f"📤 Attributes set: emotion={top_emotion_name}, avatar={avatar_expr}")
 
                                 # 2. Send to frontend via RPC (only to child, NOT the voice agent)
-                                for pid, participant in ctx.room.remote_participants.items():
+                                for pid, _participant in ctx.room.remote_participants.items():
                                     # Only send to the child frontend — skip other agents
                                     if not pid.startswith("child-"):
                                         logger.debug(f"Skipping RPC to non-child participant: {pid}")
@@ -186,9 +185,7 @@ async def emotion_detector_entrypoint(ctx: agents.JobContext):
                                         )
                                         logger.info(f"✅ RPC setEmotionState → {pid}: {rpc_payload}")
                                     except Exception as rpc_err:
-                                        logger.warning(
-                                            f"❌ RPC setEmotionState FAILED for {pid}: {rpc_err}"
-                                        )
+                                        logger.warning(f"❌ RPC setEmotionState FAILED for {pid}: {rpc_err}")
 
                                 # 3. Persist to DB for the parent dashboard
                                 if profile_id:

@@ -17,10 +17,10 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.graph import END, START, MessagesState, StateGraph
 
-from services.llm import get_chat_model
 from services.checkpointer import get_checkpointer
+from services.llm import get_chat_model
 from services.prompts import build_system_prompt
 
 logger = logging.getLogger("sakhi.chat_graph")
@@ -88,7 +88,5 @@ def build_chat_graph():
 def get_chat_graph():
     """Return the compiled chat graph.  Raises if not built yet."""
     if _compiled_graph is None:
-        raise RuntimeError(
-            "Chat graph not compiled — call build_chat_graph() first"
-        )
+        raise RuntimeError("Chat graph not compiled — call build_chat_graph() first")
     return _compiled_graph

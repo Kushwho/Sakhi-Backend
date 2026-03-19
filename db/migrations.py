@@ -259,7 +259,7 @@ SEED_PROMPTS = [
             "1. Express genuine excitement about their question\n"
             "2. Ask a thought-provoking question back before explaining\n"
             "3. Connect their question to something they might already know\n"
-            "4. End with \"What do you think?\" or a follow-up wonder question\n\n"
+            '4. End with "What do you think?" or a follow-up wonder question\n\n'
             "Never lecture. Keep it conversational and wonder-driven."
         ),
     },
@@ -283,7 +283,7 @@ SEED_PROMPTS = [
         "prompt_template": (
             "You are in Surprise Mode! Start the conversation by sharing "
             "this amazing fact:\n\n"
-            "\"{surprise_fact}\"\n\n"
+            '"{surprise_fact}"\n\n'
             "After sharing the fact:\n"
             "1. Ask the child what they think about it\n"
             "2. Use Socratic questioning to explore WHY or HOW\n"
@@ -353,7 +353,7 @@ SEED_PROMPTS = [
 async def run_migrations(pool: asyncpg.Pool) -> None:
     """Execute all migrations in order, then seed system prompts."""
     async with pool.acquire() as conn:
-        for i, sql in enumerate(MIGRATIONS):
+        for _i, sql in enumerate(MIGRATIONS):
             await conn.execute(sql)
         logger.info(f"Database migrations completed ({len(MIGRATIONS)} statements)")
 

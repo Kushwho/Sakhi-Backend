@@ -8,10 +8,9 @@ Entrypoint: ``python agent.py dev`` (via root agent.py thin wrapper)
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
-
 from livekit import agents
 from livekit.agents import (
     Agent,
@@ -22,10 +21,8 @@ from livekit.agents import (
     RunContext,
     function_tool,
     get_job_context,
-    llm,
 )
 from livekit.agents.voice.events import (
-    ConversationItemAddedEvent,
     UserInputTranscribedEvent,
 )
 from livekit.plugins import deepgram, groq, silero
@@ -87,6 +84,7 @@ class SakhiAgent(Agent):
         # are created lazily on first use and reused across all turns.
         if profile_id:
             from services.memory_manager import MemoryManager
+
             self._memory_mgr: MemoryManager | None = MemoryManager()
         else:
             self._memory_mgr = None
@@ -106,7 +104,9 @@ class SakhiAgent(Agent):
         can respond empathetically.
         """
         # Try to read emotion from the emotion detector's participant attributes
-        logger.debug(f"on_user_turn_completed: child said: {new_message.text_content[:100] if new_message.text_content else '(empty)'}")
+        logger.debug(
+            f"on_user_turn_completed: child said: {new_message.text_content[:100] if new_message.text_content else '(empty)'}"
+        )
         try:
             room = get_job_context().room
             for participant in room.remote_participants.values():
@@ -293,7 +293,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     )
 
     # ── Session timing for dashboard ──────────────────────────────────
-    session_started_at = datetime.now(timezone.utc)
+    session_started_at = datetime.now(UTC)
     turn_count = 0
 
     # ── Event listeners for detailed logging ──────────────────────────
@@ -351,7 +351,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     elif mode == "curious_surprise" and surprise_fact:
         greeting_instructions = (
             f"Greet {child_name} warmly by name and share this amazing fact: "
-            f"\"{surprise_fact}\" — then ask what they think about it! "
+            f'"{surprise_fact}" — then ask what they think about it! '
             f"Keep it to 2-3 short sentences."
         )
     elif mode == "curious_open":
@@ -362,8 +362,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         )
     else:
         greeting_instructions = (
-            f"Greet {child_name} warmly by name. "
-            f"You are excited to talk to them today! Keep it to 1-2 short sentences."
+            f"Greet {child_name} warmly by name. You are excited to talk to them today! Keep it to 1-2 short sentences."
         )
 
     await session.generate_reply(instructions=greeting_instructions)
@@ -375,7 +374,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
 
     async def _on_session_end():
         """Extract transcript from ChatContext and trigger summarization."""
-        session_ended_at = datetime.now(timezone.utc)
+        session_ended_at = datetime.now(UTC)
         logger.info("━━━ Session ending — starting summarization ━━━")
 
         if not profile_id:

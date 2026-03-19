@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 import asyncpg
@@ -125,7 +125,7 @@ class MemoryManager:
 
     EXTRACTION_PROMPT = EXTRACT_MEMORIES_PROMPT
     SIMILARITY_THRESHOLD = 0.85  # above this → near-duplicate, reinforce only
-    UPDATE_THRESHOLD = 0.6       # between this and SIMILARITY → LLM merge
+    UPDATE_THRESHOLD = 0.6  # between this and SIMILARITY → LLM merge
     DEFAULT_SERVICE = "sakhi"
     MEMORY_TTL_DAYS = 30
 
@@ -141,9 +141,7 @@ class MemoryManager:
             if not database_url:
                 logger.warning("DATABASE_URL not set — memory persistence disabled")
                 return None
-            self._db_pool = await asyncpg.create_pool(
-                dsn=database_url, min_size=1, max_size=3
-            )
+            self._db_pool = await asyncpg.create_pool(dsn=database_url, min_size=1, max_size=3)
             logger.info("MemoryManager DB pool created")
         return self._db_pool
 
@@ -213,11 +211,13 @@ class MemoryManager:
                     embedding=embedding,
                     metadata={"category": mem.get("category", "other")},
                 )
-                stored.append({
-                    "content": content,
-                    "category": mem.get("category", "other"),
-                    "is_new": was_new,
-                })
+                stored.append(
+                    {
+                        "content": content,
+                        "category": mem.get("category", "other"),
+                        "is_new": was_new,
+                    }
+                )
             except Exception as e:
                 logger.warning(f"Failed to store memory '{content[:50]}': {e}")
 
@@ -451,13 +451,10 @@ class MemoryManager:
                     WHERE id = $3
                     """,
                     new_strength,
-                    datetime.now(timezone.utc),
+                    datetime.now(UTC),
                     row["id"],
                 )
-                logger.debug(
-                    f"Reinforced memory (sim={sim:.2f}): "
-                    f"'{row['content'][:50]}' → strength={new_strength}"
-                )
+                logger.debug(f"Reinforced memory (sim={sim:.2f}): '{row['content'][:50]}' → strength={new_strength}")
                 return False
 
             elif sim >= self.UPDATE_THRESHOLD:
@@ -482,7 +479,7 @@ class MemoryManager:
                     merged_content,
                     merged_emb_str,
                     new_strength,
-                    datetime.now(timezone.utc),
+                    datetime.now(UTC),
                     row["id"],
                 )
                 logger.info(
@@ -508,4 +505,3 @@ class MemoryManager:
                 )
                 logger.debug(f"Inserted new memory: '{content[:50]}'")
                 return True
-

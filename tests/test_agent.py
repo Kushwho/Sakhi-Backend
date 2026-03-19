@@ -4,9 +4,7 @@ Tests for Sakhi Voice Agent
 Covers: SakhiAgent instantiation, tool stubs, expression validation, and FastAPI endpoints.
 """
 
-import json
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +14,6 @@ from agents.sakhi import (
     SakhiAgent,
 )
 from api.routes import app
-
 
 # ---------------------------------------------------------------------------
 # SakhiAgent unit tests
@@ -79,9 +76,6 @@ class TestExplainConceptTool:
         result = await agent.explain_concept(ctx, concept="fractions", subject="Math")
         # Stub should ask the child what they already know (Socratic)
         assert "know" in result.lower()
-
-
-
 
 
 class TestValidExpressions:
