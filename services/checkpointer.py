@@ -50,6 +50,11 @@ async def init_checkpointer():
         max_size=5,
         open=False,
         kwargs={"autocommit": True},
+        # NeonDB serverless closes idle connections after ~5 min.
+        # check runs a lightweight query before handing a conn to a caller,
+        # so stale SSL connections are detected and replaced automatically.
+        check=AsyncConnectionPool.check_connection,
+        max_idle=300,  # close conns idle > 5 min before NeonDB does
     )
     await _pool.open()
 
