@@ -25,27 +25,11 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import asyncpg
+import replicate
 from groq import AsyncGroq
 from pydantic import BaseModel, ValidationError, field_validator
 
 logger = logging.getLogger("sakhi.memory")
-
-# ---------------------------------------------------------------------------
-# Embedding model (lazy-loaded)
-# ---------------------------------------------------------------------------
-
-_embedding_model = None
-
-
-def _get_embedding_model():
-    """Lazy-load the sentence-transformers model on first use."""
-    global _embedding_model
-    if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        logger.info("Loaded embedding model: all-MiniLM-L6-v2 (384-dim)")
-    return _embedding_model
 
 
 # ---------------------------------------------------------------------------
@@ -165,11 +149,16 @@ class MemoryManager:
 
     # ── Embedding ──────────────────────────────────────────────────────
 
-    def generate_embedding(self, text: str) -> list[float]:
-        """Generate a 384-dim embedding vector for the given text."""
-        model = _get_embedding_model()
-        embedding = model.encode(text, normalize_embeddings=True)
-        return embedding.tolist()
+    async def generate_embedding(self, text: str) -> list[float]:
+        """Generate a 768-dim embedding vector via Replicate API."""
+        output = await replicate.async_run(
+            "replicate/all-mpnet-base-v2:b6b7585c9640cd7a9572c6e129c9549d79c9c31f0d3fdce7baac7c67ca38f305",
+            input={"text": text},
+        )
+        # output is a list of dicts with "embedding" key, or a flat list
+        if isinstance(output, list) and output and isinstance(output[0], dict):
+            return output[0]["embedding"]
+        return list(output)
 
     # ── Extraction (background, post-session) ──────────────────────────
 
@@ -215,7 +204,7 @@ class MemoryManager:
                 continue
 
             try:
-                embedding = self.generate_embedding(content)
+                embedding = await self.generate_embedding(content)
                 was_new = await self._deduplicate_and_store(
                     pool=pool,
                     profile_id=profile_id,
@@ -269,7 +258,7 @@ class MemoryManager:
             return []
 
         try:
-            query_embedding = self.generate_embedding(query)
+            query_embedding = await self.generate_embedding(query)
             embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
             async with pool.acquire() as conn:
@@ -477,7 +466,7 @@ class MemoryManager:
                     old_content=row["content"],
                     new_content=content,
                 )
-                merged_embedding = self.generate_embedding(merged_content)
+                merged_embedding = await self.generate_embedding(merged_content)
                 merged_emb_str = "[" + ",".join(str(x) for x in merged_embedding) + "]"
                 new_strength = min(row["strength"] + 1.0, 10.0)
 

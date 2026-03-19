@@ -124,7 +124,7 @@ MIGRATIONS = [
         profile_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
         service     TEXT NOT NULL DEFAULT 'sakhi',
         content     TEXT NOT NULL,
-        embedding   vector(384),
+        embedding   vector(768),
         metadata    JSONB DEFAULT '{}',
         strength    REAL NOT NULL DEFAULT 1.0,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
