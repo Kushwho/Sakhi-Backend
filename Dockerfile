@@ -35,6 +35,9 @@ COPY services/ services/
 COPY db/ db/
 COPY utils/ utils/
 
+# Create logs directory owned by sakhi user
+RUN mkdir -p /app/logs && chown sakhi:sakhi /app/logs
+
 # Switch to non-root user
 USER sakhi
 
