@@ -20,14 +20,27 @@ __pycache__/
 .vscode/
 .idea/
 
+# Agent files (deployed separately on LiveKit Cloud)
+agent.py
+emotion_detector.py
+agents/
+start.sh
+
 # Agent skills & config (not needed in production)
 .agents/
 .gemini/
+.claude/
 
 # Documentation (not needed in runtime)
 docs/
-Project.MD
-README.md
+*.md
+*.MD
+*.docx
+
+# Deployment configs
+fly.toml
+Dockerfile
+docker-compose*.yml
 
 # Tests (not needed in production image)
 tests/
@@ -35,3 +48,8 @@ tests/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Misc
+*.png
+*.jpg
+logs/
