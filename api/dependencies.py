@@ -5,20 +5,14 @@ FastAPI dependency functions for extracting and validating tokens
 from the Authorization header.
 """
 
-import uuid
-from typing import Annotated
-
-from fastapi import Depends, Header, HTTPException, status
+import jwt as pyjwt
+from fastapi import Header, HTTPException, status
 
 from db.pool import get_pool
 from services.jwt_service import decode_token
 
-import jwt as pyjwt
 
-
-async def _extract_and_validate(
-    authorization: str, expected_type: str
-) -> dict:
+async def _extract_and_validate(authorization: str, expected_type: str) -> dict:
     """Shared logic: decode JWT, check type, verify session not revoked."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -34,12 +28,12 @@ async def _extract_and_validate(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
-        )
+        ) from None
     except pyjwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
-        )
+        ) from None
 
     if claims.get("type") != expected_type:
         raise HTTPException(

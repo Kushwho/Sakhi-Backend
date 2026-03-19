@@ -9,7 +9,6 @@ import base64
 import io
 import logging
 import wave
-from typing import Optional
 
 from hume import AsyncHumeClient
 from hume.expression_measurement.stream import Config
@@ -74,7 +73,7 @@ class HumeEmotionClient:
         self._socket = await self._ctx_mgr.__aenter__()
         logger.info("Hume streaming connection established")
 
-    async def analyze_audio(self, audio_bytes: bytes) -> Optional[dict]:
+    async def analyze_audio(self, audio_bytes: bytes) -> dict | None:
         """Send raw audio bytes and return the top 3 prosody emotions.
 
         Returns:
@@ -91,24 +90,16 @@ class HumeEmotionClient:
                 wav_file.setsampwidth(2)  # 16-bit
                 wav_file.setframerate(48000)
                 wav_file.writeframes(audio_bytes)
-            
+
             wav_bytes = wav_io.getvalue()
             encoded = base64.b64encode(wav_bytes).decode("utf-8")
             response = await self._socket.send_file(file_=encoded, config=self._config)
 
-            if (
-                hasattr(response, "prosody")
-                and response.prosody
-                and response.prosody.predictions
-            ):
+            if hasattr(response, "prosody") and response.prosody and response.prosody.predictions:
                 emotions: list[tuple[str, float]] = []
                 for pred in response.prosody.predictions:
                     sorted_emo = sorted(
-                        [
-                            (e.name, e.score)
-                            for e in pred.emotions
-                            if e.name and e.score is not None
-                        ],
+                        [(e.name, e.score) for e in pred.emotions if e.name and e.score is not None],
                         key=lambda x: x[1],
                         reverse=True,
                     )

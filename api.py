@@ -10,7 +10,7 @@ API endpoint logic lives in api/routes.py.
 from api.routes import app  # noqa: F401
 
 # The app is configured and ready to serve from api/routes.py.
-# Run with: 
+# Run with:
 
 #
 # In production (Docker), start.sh runs:

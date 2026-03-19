@@ -1,5 +1,5 @@
-import sys
 import asyncio
+import sys
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -12,5 +12,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=False,
-        loop="asyncio",   # ← forces uvicorn to use SelectorEventLoop
+        loop="asyncio",  # ← forces uvicorn to use SelectorEventLoop
     )

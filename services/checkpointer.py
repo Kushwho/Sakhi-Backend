@@ -26,16 +26,16 @@ async def init_checkpointer():
 
     if sys.platform == "win32":
         logger.warning(
-            "Windows detected — using in-memory checkpointer. "
-            "Conversation history will not persist across restarts."
+            "Windows detected — using in-memory checkpointer. Conversation history will not persist across restarts."
         )
         from langgraph.checkpoint.memory import MemorySaver
+
         _checkpointer = MemorySaver()
         return _checkpointer
-    
+
     # Linux / Mac — use full PostgreSQL checkpointer
-    from psycopg_pool import AsyncConnectionPool
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg_pool import AsyncConnectionPool
 
     database_url = os.getenv("DATABASE_URL", "")
     database_url = database_url.replace("&channel_binding=require", "")
@@ -50,6 +50,11 @@ async def init_checkpointer():
         max_size=5,
         open=False,
         kwargs={"autocommit": True},
+        # NeonDB serverless closes idle connections after ~5 min.
+        # check runs a lightweight query before handing a conn to a caller,
+        # so stale SSL connections are detected and replaced automatically.
+        check=AsyncConnectionPool.check_connection,
+        max_idle=300,  # close conns idle > 5 min before NeonDB does
     )
     await _pool.open()
 
@@ -62,9 +67,7 @@ async def init_checkpointer():
 
 def get_checkpointer():
     if _checkpointer is None:
-        raise RuntimeError(
-            "Checkpointer not initialised — call init_checkpointer() first"
-        )
+        raise RuntimeError("Checkpointer not initialised — call init_checkpointer() first")
     return _checkpointer
 
 

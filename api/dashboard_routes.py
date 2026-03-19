@@ -46,9 +46,7 @@ async def _resolve_profile_id(claims: dict, profile_id: str | None) -> str:
     pid = profile_id or claims["profile_id"]
     pool = get_pool()
     async with pool.acquire() as conn:
-        owner = await conn.fetchval(
-            "SELECT account_id FROM profiles WHERE id = $1", uuid.UUID(pid)
-        )
+        owner = await conn.fetchval("SELECT account_id FROM profiles WHERE id = $1", uuid.UUID(pid))
     if owner is None or str(owner) != claims["sub"]:
         raise HTTPException(
             status_code=403,

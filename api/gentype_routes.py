@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from api.dependencies import require_profile_token
 from db.pool import get_pool
-from services.image_gen import get_themes, get_theme_by_id, build_letter_prompt
+from services.image_gen import build_letter_prompt, get_theme_by_id, get_themes
 from services.llm import get_llm_client
 from services.profiles import get_current_profile
 
@@ -52,9 +52,7 @@ async def _get_cached(conn, cache_key: str) -> str | None:
     return row["image_url"] if row else None
 
 
-async def _upsert_cache(
-    conn, cache_key: str, letter: str, theme_id: str, image_url: str
-) -> None:
+async def _upsert_cache(conn, cache_key: str, letter: str, theme_id: str, image_url: str) -> None:
     await conn.execute(
         """
         INSERT INTO gentype_cache (cache_key, letter, theme_id, image_url)
@@ -122,7 +120,7 @@ async def generate_letter(
         image_url = await llm.generate_image(prompt)
     except Exception as e:
         logger.error(f"GenType generation failed for {letter}/{req.theme_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Image generation failed")
+        raise HTTPException(status_code=500, detail="Image generation failed") from e
 
     # Cache the result
     async with pool.acquire() as conn:
@@ -175,7 +173,7 @@ async def spell_name(
             cache_results[letter] = await _get_cached(conn, f"{req.theme_id}:{letter}")
 
     # Generate uncached letters sequentially (Replicate rate limit: burst of 1)
-    uncached = [l for l in unique_letters if cache_results[l] is None]
+    uncached = [ch for ch in unique_letters if cache_results[ch] is None]
     generated: list[dict] = []
     llm = get_llm_client()
     for i, letter in enumerate(uncached):
@@ -196,20 +194,25 @@ async def spell_name(
         for result in generated:
             if result["image_url"]:
                 await _upsert_cache(
-                    conn, f"{req.theme_id}:{result['letter']}",
-                    result["letter"], req.theme_id, result["image_url"],
+                    conn,
+                    f"{req.theme_id}:{result['letter']}",
+                    result["letter"],
+                    req.theme_id,
+                    result["image_url"],
                 )
 
     # Assemble response in name-letter order
     letters_out = []
     for letter in unique_letters:
         if cache_results[letter]:
-            letters_out.append({
-                "letter": letter,
-                "image_url": cache_results[letter],
-                "from_cache": True,
-                "error": None,
-            })
+            letters_out.append(
+                {
+                    "letter": letter,
+                    "image_url": cache_results[letter],
+                    "from_cache": True,
+                    "error": None,
+                }
+            )
         else:
             letters_out.append(gen_map[letter])
 
@@ -217,5 +220,5 @@ async def spell_name(
         "name": child_name,
         "theme_id": req.theme_id,
         "letters": letters_out,
-        "has_errors": any(l["error"] for l in letters_out),
+        "has_errors": any(entry["error"] for entry in letters_out),
     }

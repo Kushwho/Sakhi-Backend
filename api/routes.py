@@ -4,39 +4,40 @@ Sakhi Backend — API Routes
 FastAPI endpoints: token generation + health check + auth system.
 """
 
+import asyncio
 import json
 import logging
 import os
-import time
 import sys
-import asyncio
+import time
 from contextlib import asynccontextmanager
 
-if sys.platform == 'win32':
+if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from livekit import api
-from pydantic import BaseModel
+from dotenv import load_dotenv  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from livekit import api  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 load_dotenv(".env.local")
 
-from db.pool import init_pool, close_pool
-from db.migrations import run_migrations
-from api.auth_routes import router as auth_router
-from api.dashboard_routes import router as dashboard_router
-from api.chat_routes import router as chat_router
-from api.curious_routes import router as curious_router, curio_router
-from api.say_what_you_see_routes import router as swys_router
-from api.gentype_routes import router as gentype_router
-from api.dependencies import require_profile_token
-from services.profiles import get_current_profile
-from services.checkpointer import init_checkpointer, close_checkpointer
-from services.chat_graph import build_chat_graph
-from services.prompts import load_prompts
-from utils.logging_config import setup_logging
+from api.auth_routes import router as auth_router  # noqa: E402
+from api.chat_routes import router as chat_router  # noqa: E402
+from api.curious_routes import curio_router  # noqa: E402
+from api.curious_routes import router as curious_router  # noqa: E402
+from api.dashboard_routes import router as dashboard_router  # noqa: E402
+from api.dependencies import require_profile_token  # noqa: E402
+from api.gentype_routes import router as gentype_router  # noqa: E402
+from api.say_what_you_see_routes import router as swys_router  # noqa: E402
+from db.migrations import run_migrations  # noqa: E402
+from db.pool import close_pool, init_pool  # noqa: E402
+from services.chat_graph import build_chat_graph  # noqa: E402
+from services.checkpointer import close_checkpointer, init_checkpointer  # noqa: E402
+from services.profiles import get_current_profile  # noqa: E402
+from services.prompts import load_prompts  # noqa: E402
+from utils.logging_config import setup_logging  # noqa: E402
 
 setup_logging()
 
@@ -60,9 +61,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sakhi Backend", version="0.2.0", lifespan=lifespan)
 
-_ALLOWED_ORIGINS = os.getenv(
-    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"
-).split(",")
+_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,6 +83,7 @@ app.include_router(gentype_router)
 
 class TokenRequest(BaseModel):
     """Optional request body for LiveKit token generation."""
+
     mode: str = "default"
     topic_id: str | None = None
     surprise_fact: str | None = None
@@ -111,9 +111,7 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
     The child's profile data is fetched from the database using the profile token claims.
     """
     if claims.get("profile_type") != "child":
-        raise HTTPException(
-            status_code=403, detail="Only child profiles can start voice sessions"
-        )
+        raise HTTPException(status_code=403, detail="Only child profiles can start voice sessions")
 
     # Fetch child profile from DB
     profile = await get_current_profile(claims["profile_id"])
@@ -135,6 +133,7 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
     topic_context = None
     if req.mode == "curious_topic" and req.topic_id:
         from services.topics import get_topic_by_id
+
         topic = get_topic_by_id(req.topic_id)
         if topic:
             topic_context = {"title": topic["title"], "description": topic["description"]}
@@ -171,9 +170,7 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
         lkapi = api.LiveKitAPI()
 
         # Create the room first
-        await lkapi.room.create_room(
-            api.CreateRoomRequest(name=room_name, metadata=room_metadata)
-        )
+        await lkapi.room.create_room(api.CreateRoomRequest(name=room_name, metadata=room_metadata))
 
         # Dispatch the voice agent
         await lkapi.agent_dispatch.create_dispatch(
@@ -195,11 +192,10 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
         logger.info(f"Room created, agent + emotion detector dispatched: {room_name}")
     except Exception as e:
         logger.error(f"Failed to dispatch agent: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to start voice session")
+        raise HTTPException(status_code=500, detail="Failed to start voice session") from e
 
     return TokenResponse(
         token=token.to_jwt(),
         room_name=room_name,
         livekit_url=livekit_url,
     )
-
