@@ -18,11 +18,11 @@ import sys
 logger = logging.getLogger("sakhi.checkpointer")
 
 _checkpointer = None
-_cm = None
+_pool = None
 
 
 async def init_checkpointer():
-    global _checkpointer, _cm
+    global _checkpointer, _pool
 
     if sys.platform == "win32":
         logger.warning(
@@ -34,17 +34,29 @@ async def init_checkpointer():
         return _checkpointer
     
     # Linux / Mac — use full PostgreSQL checkpointer
+    from psycopg_pool import AsyncConnectionPool
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     database_url = os.getenv("DATABASE_URL", "")
     database_url = database_url.replace("&channel_binding=require", "")
     database_url = database_url.replace("channel_binding=require&", "")
 
-    _cm = AsyncPostgresSaver.from_conn_string(database_url)
-    _checkpointer = await _cm.__aenter__()
+    # Use a connection pool instead of a single connection so that
+    # stale/dropped connections (common with NeonDB serverless) are
+    # automatically replaced.
+    _pool = AsyncConnectionPool(
+        conninfo=database_url,
+        min_size=1,
+        max_size=5,
+        open=False,
+        kwargs={"autocommit": True},
+    )
+    await _pool.open()
+
+    _checkpointer = AsyncPostgresSaver(conn=_pool)
     await _checkpointer.setup()
 
-    logger.info("LangGraph PostgreSQL checkpointer initialised")
+    logger.info("LangGraph PostgreSQL checkpointer initialised (pooled)")
     return _checkpointer
 
 
@@ -57,9 +69,9 @@ def get_checkpointer():
 
 
 async def close_checkpointer():
-    global _checkpointer, _cm
-    if _cm is not None:
-        await _cm.__aexit__(None, None, None)
-        _cm = None
+    global _checkpointer, _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
     _checkpointer = None
     logger.info("LangGraph checkpointer closed")
