@@ -29,6 +29,8 @@ from api.auth_routes import router as auth_router
 from api.dashboard_routes import router as dashboard_router
 from api.chat_routes import router as chat_router
 from api.curious_routes import router as curious_router, curio_router
+from api.say_what_you_see_routes import router as swys_router
+from api.gentype_routes import router as gentype_router
 from api.dependencies import require_profile_token
 from services.profiles import get_current_profile
 from services.checkpointer import init_checkpointer, close_checkpointer
@@ -58,9 +60,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sakhi Backend", version="0.2.0", lifespan=lifespan)
 
+_ALLOWED_ORIGINS = os.getenv(
+    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -72,6 +78,8 @@ app.include_router(dashboard_router)
 app.include_router(chat_router)
 app.include_router(curious_router)
 app.include_router(curio_router)
+app.include_router(swys_router)
+app.include_router(gentype_router)
 
 
 class TokenRequest(BaseModel):
@@ -186,8 +194,8 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
         await lkapi.aclose()
         logger.info(f"Room created, agent + emotion detector dispatched: {room_name}")
     except Exception as e:
-        logger.error(f"Failed to dispatch agent: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to dispatch agent: {e}")
+        logger.error(f"Failed to dispatch agent: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to start voice session")
 
     return TokenResponse(
         token=token.to_jwt(),

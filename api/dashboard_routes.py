@@ -6,11 +6,12 @@ Requires a parent profile token.
 """
 
 import logging
-from typing import Optional
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.dependencies import require_profile_token
+from db.pool import get_pool
 from services.dashboard import (
     get_alerts,
     get_mood_summary,
@@ -30,7 +31,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 # ---------------------------------------------------------------------------
 
 
-def _resolve_profile_id(claims: dict, profile_id: str | None) -> str:
+async def _resolve_profile_id(claims: dict, profile_id: str | None) -> str:
     """Resolve which child profile to fetch metrics for.
 
     A parent can view any child profile in their account.
@@ -42,8 +43,18 @@ def _resolve_profile_id(claims: dict, profile_id: str | None) -> str:
             status_code=403,
             detail="Only parent profiles can access the dashboard",
         )
-    # TODO: Verify the requested profile_id belongs to the same account
-    return profile_id or claims["profile_id"]
+    pid = profile_id or claims["profile_id"]
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        owner = await conn.fetchval(
+            "SELECT account_id FROM profiles WHERE id = $1", uuid.UUID(pid)
+        )
+    if owner is None or str(owner) != claims["sub"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Profile does not belong to your account",
+        )
+    return pid
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +69,7 @@ async def dashboard_time_spent(
     claims: dict = Depends(require_profile_token),
 ):
     """Time spent with Sakhi — total minutes and daily breakdown."""
-    pid = _resolve_profile_id(claims, profile_id)
+    pid = await _resolve_profile_id(claims, profile_id)
     return await get_time_spent(pid, days)
 
 
@@ -69,7 +80,7 @@ async def dashboard_mood(
     claims: dict = Depends(require_profile_token),
 ):
     """Mood summary — session moods and emotion distribution."""
-    pid = _resolve_profile_id(claims, profile_id)
+    pid = await _resolve_profile_id(claims, profile_id)
     return await get_mood_summary(pid, days)
 
 
@@ -80,7 +91,7 @@ async def dashboard_topics(
     claims: dict = Depends(require_profile_token),
 ):
     """Topics explored — top 5 deduplicated topics."""
-    pid = _resolve_profile_id(claims, profile_id)
+    pid = await _resolve_profile_id(claims, profile_id)
     return await get_topics_explored(pid, days)
 
 
@@ -90,7 +101,7 @@ async def dashboard_streak(
     claims: dict = Depends(require_profile_token),
 ):
     """Streak — current and longest consecutive days."""
-    pid = _resolve_profile_id(claims, profile_id)
+    pid = await _resolve_profile_id(claims, profile_id)
     return await get_streak(pid)
 
 
@@ -101,7 +112,7 @@ async def dashboard_alerts(
     claims: dict = Depends(require_profile_token),
 ):
     """Sakhi Noticed — alert feed for parents."""
-    pid = _resolve_profile_id(claims, profile_id)
+    pid = await _resolve_profile_id(claims, profile_id)
     return await get_alerts(pid, limit)
 
 
@@ -111,5 +122,5 @@ async def dashboard_overview(
     claims: dict = Depends(require_profile_token),
 ):
     """All 5 metrics in one call — for the main dashboard view."""
-    pid = _resolve_profile_id(claims, profile_id)
+    pid = await _resolve_profile_id(claims, profile_id)
     return await get_overview(pid)

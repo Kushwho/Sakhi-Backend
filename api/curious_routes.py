@@ -193,7 +193,10 @@ async def start_curio_activity(
                 return {
                     "activity_id": activity_id,
                     "mode": "curious_topic",
-                    "context": {"topic": {"title": topic["title"], "description": topic["description"]}},
+                    "context": {
+                        "topic_id": req.topic_id,
+                        "topic": {"title": topic["title"], "description": topic["description"]},
+                    },
                 }
             else:
                 # No topic_id given — return topic list so frontend can let child pick
@@ -261,10 +264,11 @@ async def start_curio_activity(
 
     # ── GenType ──────────────────────────────────────────────────────────────
     if activity_id == "gentype":
+        from services.image_gen import get_themes
         return {
             "activity_id": activity_id,
             "mode": "curio_gentype",
-            "context": {},
+            "context": {"themes": get_themes()},
         }
 
     # Fallback (shouldn't reach here given catalog check above)
