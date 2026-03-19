@@ -20,6 +20,11 @@
       "source": "livekit/agent-skills",
       "sourceType": "github",
       "computedHash": "d709ee665f549428810436f97309bfcee237f5ce7801f4c0eecaf6445085f48a"
+    },
+    "production-code-audit": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "a15d5ce4b86b24051dbb2646be659e1a90f9090472a1f2267e69ac58d31ae2e5"
     }
   }
 }
