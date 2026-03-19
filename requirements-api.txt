@@ -1,0 +1,43 @@
+# FastAPI server dependencies (no agent/voice packages)
+fastapi==0.135.1
+uvicorn==0.41.0
+python-dotenv==1.2.2
+pydantic==2.12.5
+
+# LiveKit API (for room creation + agent dispatch, NOT agent runtime)
+livekit==1.1.2
+livekit-api==1.1.0
+
+# Database
+asyncpg>=0.30.0
+psycopg[binary]==3.3.3
+psycopg-pool==3.3.0
+pgvector
+
+# Auth
+bcrypt>=4.2.0
+PyJWT>=2.9.0
+email-validator>=2.1.0
+
+# Chat pipeline (LangGraph)
+langchain-core
+langchain-groq
+langgraph
+langgraph-checkpoint
+langgraph-checkpoint-postgres
+langgraph-prebuilt
+langgraph-sdk
+langsmith
+
+# LLM + image gen (used by curious_routes, chat_graph)
+groq
+replicate
+openai
+
+# Memory extraction (used by session summarizer via chat routes)
+sentence-transformers
+
+# Async utilities
+aiohttp
+aiofiles
+requests
