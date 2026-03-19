@@ -1,6 +1,6 @@
 # ============================================================================
-# Sakhi Voice Agent — Production Dockerfile
-# Runs both the FastAPI token server and the LiveKit Voice Agent
+# Sakhi Backend — Production Dockerfile (FastAPI only)
+# Voice agents are deployed separately on LiveKit Cloud
 # ============================================================================
 
 # -- Stage 1: Build dependencies ---------------------------------------------
@@ -28,31 +28,22 @@ WORKDIR /app
 # Copy installed packages from builder stage
 COPY --from=builder /install /usr/local
 
-# Copy application code — entrypoints + packages
-COPY agent.py .
-COPY api.py .
-COPY emotion_detector.py .
+# Copy application code — FastAPI server + services
+COPY run.py .
 COPY api/ api/
-COPY agents/ agents/
 COPY services/ services/
 COPY db/ db/
-COPY start.sh .
+COPY utils/ utils/
 
-# Make start script executable
-RUN chmod +x start.sh
-
-# Switch to non-root user FIRST so models are saved in its home directory
+# Switch to non-root user
 USER sakhi
-
-# Download Silero VAD + Turn Detector models at build time (not at runtime)
-RUN python agent.py download-files
 
 # Expose the FastAPI port
 EXPOSE 8000
 
 # Health check for the FastAPI server
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 
-# Start both services
-CMD ["bash", "start.sh"]
+# Start FastAPI server
+CMD ["python", "run.py"]
