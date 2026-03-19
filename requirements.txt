@@ -24,3 +24,4 @@ langgraph-checkpoint-postgres
 langgraph-prebuilt
 langgraph-sdk
 langsmith
+replicate
