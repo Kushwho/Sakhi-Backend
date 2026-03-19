@@ -29,6 +29,8 @@ from api.auth_routes import router as auth_router
 from api.dashboard_routes import router as dashboard_router
 from api.chat_routes import router as chat_router
 from api.curious_routes import router as curious_router, curio_router
+from api.say_what_you_see_routes import router as swys_router
+from api.gentype_routes import router as gentype_router
 from api.dependencies import require_profile_token
 from services.profiles import get_current_profile
 from services.checkpointer import init_checkpointer, close_checkpointer
@@ -72,6 +74,8 @@ app.include_router(dashboard_router)
 app.include_router(chat_router)
 app.include_router(curious_router)
 app.include_router(curio_router)
+app.include_router(swys_router)
+app.include_router(gentype_router)
 
 
 class TokenRequest(BaseModel):

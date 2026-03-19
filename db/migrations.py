@@ -167,6 +167,56 @@ MIGRATIONS = [
     """
     ALTER TABLE session_summaries ADD COLUMN IF NOT EXISTS mode TEXT DEFAULT 'default';
     """,
+    # ------- swys_images (Say What You See seed image catalog) -------
+    """
+    CREATE TABLE IF NOT EXISTS swys_images (
+        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title           TEXT NOT NULL,
+        original_prompt TEXT NOT NULL,
+        image_url       TEXT NOT NULL,
+        level           SMALLINT NOT NULL CHECK (level BETWEEN 1 AND 5),
+        category        TEXT NOT NULL DEFAULT 'general',
+        is_active       BOOLEAN NOT NULL DEFAULT true,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT swys_images_prompt_unique UNIQUE (original_prompt)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_swys_images_level
+        ON swys_images(level, is_active);
+    """,
+    # ------- swys_attempts (kid's image-prompt attempts) -------
+    """
+    CREATE TABLE IF NOT EXISTS swys_attempts (
+        id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        profile_id          UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        image_id            UUID NOT NULL REFERENCES swys_images(id),
+        kid_prompt          TEXT NOT NULL,
+        generated_image_url TEXT NOT NULL,
+        score               SMALLINT NOT NULL CHECK (score BETWEEN 0 AND 100),
+        hint                TEXT NOT NULL,
+        created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_swys_attempts_profile
+        ON swys_attempts(profile_id, created_at DESC);
+    """,
+    # ------- gentype_cache (GenType letter image cache) -------
+    """
+    CREATE TABLE IF NOT EXISTS gentype_cache (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        cache_key   TEXT UNIQUE NOT NULL,
+        letter      CHAR(1) NOT NULL,
+        theme_id    TEXT NOT NULL,
+        image_url   TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_gentype_cache_key
+        ON gentype_cache(cache_key);
+    """,
 ]
 
 # ---------------------------------------------------------------------------
