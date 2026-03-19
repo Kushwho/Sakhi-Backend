@@ -193,7 +193,10 @@ async def start_curio_activity(
                 return {
                     "activity_id": activity_id,
                     "mode": "curious_topic",
-                    "context": {"topic": {"title": topic["title"], "description": topic["description"]}},
+                    "context": {
+                        "topic_id": req.topic_id,
+                        "topic": {"title": topic["title"], "description": topic["description"]},
+                    },
                 }
             else:
                 # No topic_id given — return topic list so frontend can let child pick
