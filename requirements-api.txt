@@ -32,10 +32,6 @@ langsmith
 # LLM + image gen (used by curious_routes, chat_graph)
 groq
 replicate
-openai
-
-# Memory extraction (used by session summarizer via chat routes)
-sentence-transformers
 
 # Async utilities
 aiohttp
