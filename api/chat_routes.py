@@ -40,6 +40,8 @@ class ChatSendRequest(BaseModel):
     thread_id: str | None = None
     mode: str = "default"           # "default" | "curious_open" | "curious_topic" | "curious_surprise"
     topic_id: str | None = None     # for curious_topic mode
+    topic_title: str | None = None  # alternative to topic_id — passed directly from /start context
+    topic_description: str | None = None
     surprise_fact: str | None = None  # for curious_surprise mode
 
 
@@ -110,13 +112,18 @@ async def chat_send(req: ChatSendRequest, claims: dict = Depends(require_profile
 
     thread_id = req.thread_id or str(uuid.uuid4())
 
-    # Resolve topic context if a topic_id is provided
+    # Resolve topic context — prefer topic_id lookup, fall back to direct title/description
     topic_context = None
-    if req.mode == "curious_topic" and req.topic_id:
-        from services.topics import get_topic_by_id
-        topic = get_topic_by_id(req.topic_id)
-        if topic:
-            topic_context = {"title": topic["title"], "description": topic["description"]}
+    if req.mode == "curious_topic":
+        if req.topic_id:
+            from services.topics import get_topic_by_id
+            topic = get_topic_by_id(req.topic_id)
+            if topic:
+                topic_context = {"title": topic["title"], "description": topic["description"]}
+        if not topic_context and req.topic_title:
+            topic_context = {"title": req.topic_title, "description": req.topic_description or ""}
+
+    logger.info(f"Chat send: mode={req.mode}, topic_context={topic_context}, thread={thread_id}")
 
     config = {
         "configurable": {
