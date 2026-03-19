@@ -27,9 +27,7 @@ def _verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
-async def signup(
-    email: str, password: str, family_name: str
-) -> dict:
+async def signup(email: str, password: str, family_name: str) -> dict:
     """Create a new family account with an auto-created parent profile.
 
     Returns: {account, parent_profile, account_token, refresh_token}
@@ -39,9 +37,7 @@ async def signup(
 
     async with pool.acquire() as conn:
         # Check if email already exists
-        existing = await conn.fetchval(
-            "SELECT id FROM accounts WHERE email = $1", email
-        )
+        existing = await conn.fetchval("SELECT id FROM accounts WHERE email = $1", email)
         if existing:
             raise ValueError("An account with this email already exists")
 
@@ -104,9 +100,7 @@ async def login(email: str, password: str) -> dict:
     pool = get_pool()
 
     async with pool.acquire() as conn:
-        account = await conn.fetchrow(
-            "SELECT * FROM accounts WHERE email = $1", email
-        )
+        account = await conn.fetchrow("SELECT * FROM accounts WHERE email = $1", email)
         if not account:
             raise ValueError("Invalid email or password")
 

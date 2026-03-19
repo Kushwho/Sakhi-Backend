@@ -5,15 +5,13 @@ Covers: prompt assembly, topic catalog, curious API endpoints, and mode
 passthrough in chat routes.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from services.prompts import build_system_prompt, _prompt_cache
-from services.topics import get_topics_for_age, get_topic_by_id, get_topics_response
-
+from services.prompts import _prompt_cache, build_system_prompt
+from services.topics import get_topic_by_id, get_topics_for_age, get_topics_response
 
 # ---------------------------------------------------------------------------
 # Prompt assembly tests
@@ -45,7 +43,9 @@ class TestBuildSystemPrompt:
     def test_curious_topic_fills_placeholders(self):
         topic = {"title": "Black Holes", "description": "Explore space mysteries!"}
         prompt = build_system_prompt(
-            "Aarav", 10, "English",
+            "Aarav",
+            10,
+            "English",
             mode="curious_topic",
             topic=topic,
         )
@@ -56,7 +56,9 @@ class TestBuildSystemPrompt:
 
     def test_curious_surprise_fills_fact(self):
         prompt = build_system_prompt(
-            "Meera", 6, "Tamil",
+            "Meera",
+            6,
+            "Tamil",
             mode="curious_surprise",
             surprise_fact="Octopuses have three hearts!",
         )
@@ -135,6 +137,7 @@ class TestTopicCatalog:
 
     def test_every_topic_has_required_fields(self):
         from services.topics import TOPICS
+
         for t in TOPICS:
             assert "id" in t
             assert "title" in t
@@ -148,6 +151,7 @@ class TestTopicCatalog:
 
     def test_topic_ids_are_unique(self):
         from services.topics import TOPICS
+
         ids = [t["id"] for t in TOPICS]
         assert len(ids) == len(set(ids)), "Duplicate topic IDs found"
 
@@ -192,6 +196,7 @@ class TestCuriousEndpoints:
     @pytest.fixture
     def client(self):
         from api.routes import app
+
         return TestClient(app)
 
     @patch("api.curious_routes.require_profile_token")
@@ -201,11 +206,10 @@ class TestCuriousEndpoints:
         mock_profile.return_value = {"display_name": "Test", "age": 8}
 
         # Override the dependency
-        from api.routes import app
         from api.dependencies import require_profile_token
-        app.dependency_overrides[require_profile_token] = lambda: {
-            "profile_id": "test-id", "profile_type": "child"
-        }
+        from api.routes import app
+
+        app.dependency_overrides[require_profile_token] = lambda: {"profile_id": "test-id", "profile_type": "child"}
 
         try:
             response = client.get("/api/curious/topics")
@@ -225,11 +229,10 @@ class TestCuriousEndpoints:
     @patch("api.curious_routes.require_profile_token")
     @patch("api.curious_routes.get_current_profile")
     def test_get_topics_rejects_parent(self, mock_profile, mock_auth, client):
-        from api.routes import app
         from api.dependencies import require_profile_token
-        app.dependency_overrides[require_profile_token] = lambda: {
-            "profile_id": "test-id", "profile_type": "parent"
-        }
+        from api.routes import app
+
+        app.dependency_overrides[require_profile_token] = lambda: {"profile_id": "test-id", "profile_type": "parent"}
         try:
             response = client.get("/api/curious/topics")
             assert response.status_code == 403
@@ -239,19 +242,20 @@ class TestCuriousEndpoints:
     @patch("services.llm.get_llm_client")
     @patch("api.curious_routes.get_current_profile")
     def test_get_surprise_calls_llm(self, mock_profile, mock_llm_fn, client):
-        from api.routes import app
         from api.dependencies import require_profile_token
-        app.dependency_overrides[require_profile_token] = lambda: {
-            "profile_id": "test-id", "profile_type": "child"
-        }
+        from api.routes import app
+
+        app.dependency_overrides[require_profile_token] = lambda: {"profile_id": "test-id", "profile_type": "child"}
 
         mock_profile.return_value = {"display_name": "Test", "age": 8}
         mock_llm = MagicMock()
-        mock_llm.generate_json = AsyncMock(return_value={
-            "fact": "Honey never spoils!",
-            "topic": "Food Science",
-            "follow_up_question": "Why do you think that is?",
-        })
+        mock_llm.generate_json = AsyncMock(
+            return_value={
+                "fact": "Honey never spoils!",
+                "topic": "Food Science",
+                "follow_up_question": "Why do you think that is?",
+            }
+        )
         mock_llm_fn.return_value = mock_llm
 
         try:
@@ -275,6 +279,7 @@ class TestChatModePassthrough:
 
     def test_chat_send_request_accepts_mode_fields(self):
         from api.chat_routes import ChatSendRequest
+
         req = ChatSendRequest(
             message="Tell me about space",
             mode="curious_topic",
@@ -285,6 +290,7 @@ class TestChatModePassthrough:
 
     def test_chat_send_request_defaults(self):
         from api.chat_routes import ChatSendRequest
+
         req = ChatSendRequest(message="Hello")
         assert req.mode == "default"
         assert req.topic_id is None
@@ -292,6 +298,7 @@ class TestChatModePassthrough:
 
     def test_end_session_request_accepts_mode(self):
         from api.chat_routes import EndSessionRequest
+
         # There are two EndSessionRequest definitions; get the one with mode
         req = EndSessionRequest(thread_id="abc-123", mode="curious_open")
         assert req.mode == "curious_open"

@@ -6,10 +6,10 @@ Thin wrapper: ``python agent.py dev`` (or ``console`` / ``start``)
 All agent logic lives in agents/sakhi.py.
 """
 
-import sys
 import asyncio
+import sys
 
-if sys.platform == 'win32':
+if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from livekit import agents
