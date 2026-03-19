@@ -60,9 +60,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sakhi Backend", version="0.2.0", lifespan=lifespan)
 
+_ALLOWED_ORIGINS = os.getenv(
+    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -190,8 +194,8 @@ async def create_token(req: TokenRequest = TokenRequest(), claims: dict = Depend
         await lkapi.aclose()
         logger.info(f"Room created, agent + emotion detector dispatched: {room_name}")
     except Exception as e:
-        logger.error(f"Failed to dispatch agent: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to dispatch agent: {e}")
+        logger.error(f"Failed to dispatch agent: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to start voice session")
 
     return TokenResponse(
         token=token.to_jwt(),
