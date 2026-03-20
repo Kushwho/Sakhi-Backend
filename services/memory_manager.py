@@ -20,6 +20,7 @@ Usage:
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -149,10 +150,13 @@ class MemoryManager:
 
     async def generate_embedding(self, text: str) -> list[float]:
         """Generate a 768-dim embedding vector via Replicate API."""
+        t0 = time.monotonic()
         output = await replicate.async_run(
             "replicate/all-mpnet-base-v2:b6b7585c9640cd7a9572c6e129c9549d79c9c31f0d3fdce7baac7c67ca38f305",
             input={"text": text},
         )
+        elapsed = time.monotonic() - t0
+        logger.info(f"Replicate embedding took {elapsed:.1f}s for '{text[:50]}'")
         # output is a list of dicts with "embedding" key, or a flat list
         if isinstance(output, list) and output and isinstance(output[0], dict):
             return output[0]["embedding"]
@@ -218,8 +222,8 @@ class MemoryManager:
                         "is_new": was_new,
                     }
                 )
-            except Exception as e:
-                logger.warning(f"Failed to store memory '{content[:50]}': {e}")
+            except Exception:
+                logger.exception(f"Failed to store memory '{content[:50]}'")
 
         new_count = sum(1 for m in stored if m["is_new"])
         reinforced_count = len(stored) - new_count
@@ -317,10 +321,9 @@ class MemoryManager:
             for msg in transcript:
                 role = msg.get("role", "unknown")
                 text = msg.get("text", "")
-                if role == "system":
+                if role not in ("user", "human"):
                     continue
-                speaker = "CHILD" if role == "user" else "SAKHI"
-                lines.append(f"{speaker}: {text}")
+                lines.append(f"CHILD: {text}")
             transcript_text = "\n".join(lines) if lines else "No conversation content."
 
             client = AsyncGroq()
