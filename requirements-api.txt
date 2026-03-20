@@ -37,3 +37,5 @@ replicate
 aiohttp
 aiofiles
 requests
+
+boto3>=1.35.0
