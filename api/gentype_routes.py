@@ -18,6 +18,7 @@ from db.pool import get_pool
 from services.image_gen import build_letter_prompt, get_theme_by_id, get_themes
 from services.llm import get_llm_client
 from services.profiles import get_current_profile
+from services.r2 import gentype_cache_key, get_r2_client
 
 logger = logging.getLogger("sakhi.api.gentype")
 
@@ -122,6 +123,14 @@ async def generate_letter(
         logger.error(f"GenType generation failed for {letter}/{req.theme_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Image generation failed") from e
 
+    # Upload to R2 for permanent storage
+    try:
+        r2 = get_r2_client()
+        r2_key = gentype_cache_key(req.theme_id, letter)
+        image_url = await r2.upload_from_url(image_url, r2_key)
+    except Exception as e:
+        logger.warning(f"R2 upload failed for {letter}/{req.theme_id}, using Replicate URL: {e}")
+
     # Cache the result
     async with pool.acquire() as conn:
         await _upsert_cache(conn, cache_key, letter, req.theme_id, image_url)
@@ -180,6 +189,13 @@ async def spell_name(
         prompt = build_letter_prompt(letter, req.theme_id)
         try:
             url = await llm.generate_image(prompt)
+            # Upload to R2 for permanent storage
+            try:
+                r2 = get_r2_client()
+                r2_key = gentype_cache_key(req.theme_id, letter)
+                url = await r2.upload_from_url(url, r2_key)
+            except Exception as r2_err:
+                logger.warning(f"R2 upload failed for {letter}/{req.theme_id}, using Replicate URL: {r2_err}")
             generated.append({"letter": letter, "image_url": url, "from_cache": False, "error": None})
         except Exception as e:
             logger.error(f"GenType spell-name failed for {letter}: {e}", exc_info=True)

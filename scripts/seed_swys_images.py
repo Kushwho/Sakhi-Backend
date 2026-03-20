@@ -24,6 +24,7 @@ import replicate
 from dotenv import load_dotenv
 
 from db.migrations import run_migrations
+from services.r2 import get_r2_client, swys_seed_key
 
 load_dotenv(".env.local")
 
@@ -145,11 +146,27 @@ async def main() -> None:
 
     print(f"Seeding {len(SEED_IMAGES)} images into swys_images...\n")
 
+    # Initialize R2 client for permanent storage
+    try:
+        r2 = get_r2_client()
+        print("R2 client initialized — images will be stored in R2.\n")
+    except Exception as e:
+        r2 = None
+        print(f"R2 not configured ({e}), images will use Replicate URLs.\n")
+
     for i, entry in enumerate(SEED_IMAGES, 1):
         print(f"[{i}/{len(SEED_IMAGES)}] Generating: {entry['title']} (level {entry['level']})")
         print(f"  Prompt: {entry['original_prompt'][:70]}...")
         try:
             image_url = await generate_image(entry["original_prompt"])
+
+            # Upload to R2 for permanent storage
+            if r2:
+                image_id = entry["title"].lower().replace(" ", "-")
+                r2_key = swys_seed_key(image_id)
+                image_url = await r2.upload_from_url(image_url, r2_key)
+                print(f"  [R2] Uploaded to {r2_key}")
+
             await upsert_image(conn, entry, image_url)
             print(f"  [OK] URL: {image_url[:80]}\n")
         except Exception as e:
