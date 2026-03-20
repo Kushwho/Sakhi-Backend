@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # Sakhi Backend — Startup Script
-# Runs FastAPI (token server) + LiveKit Voice Agent + Emotion Detector + Story Agent
+# Runs FastAPI (token server) + LiveKit Voice Agent + Emotion Detector
 #
 # Strategy:
 #   1. Start the Voice Agent FIRST (in background) so it can begin registering
@@ -26,11 +26,6 @@ echo "Starting Emotion Detector..."
 python emotion_detector.py start &
 EMOTION_PID=$!
 
-# Start the Story Agent in the background
-echo "Starting Story Agent..."
-python story_entrypoint.py start &
-STORY_PID=$!
-
 # Wait for the agent workers to register with LiveKit Cloud
 echo "Waiting for agents to initialize and register..."
 sleep 30
@@ -42,9 +37,9 @@ python run.py &
 FASTAPI_PID=$!
 
 # Wait for any process to exit
-wait -n $AGENT_PID $EMOTION_PID $STORY_PID $FASTAPI_PID 2>/dev/null || true
+wait -n $AGENT_PID $EMOTION_PID $FASTAPI_PID 2>/dev/null || true
 
 # If one exits, clean up the others
 echo "A process exited, shutting down..."
-kill $AGENT_PID $EMOTION_PID $STORY_PID $FASTAPI_PID 2>/dev/null || true
+kill $AGENT_PID $EMOTION_PID $FASTAPI_PID 2>/dev/null || true
 wait

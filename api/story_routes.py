@@ -1,218 +1,217 @@
 """
-Sakhi Backend — Story Routes
-==============================
-Endpoints for the Story Narration feature:
+Sakhi Backend — Story Generation Routes
+==========================================
+New AI-powered multi-modal story generation endpoints.
 
-  Browse flow (frontend):
-    1. GET  /api/stories/random?genre=adventure&age=8  → preview (id + title)
-    2. GET  /api/stories/{id}                          → confirm story details
-    3. POST /api/story-token  {story_id: "..."}        → start session
+Story generation pipeline:
+  1. POST /api/stories/generate  — Generate a complete story (text + images)
+  2. GET  /api/stories/health    — Service health check (feature flag for frontend)
 
-  Admin (seeding):
-    GET  /api/stories          → list all
-    POST /api/stories          → create with segments
+The legacy pre-authored story endpoints (browse, token, CRUD) have been
+replaced by this on-demand AI generation pipeline.
+
+Authentication:
+  All endpoints require a valid profile token. Story generation is available
+  to any profile type (children and parents).
 """
 
-import json
 import logging
-import os
-import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from livekit import api
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.dependencies import require_profile_token
-from services.profiles import get_current_profile
-from services.stories import create_story, get_random_story, get_story, list_stories
+from services.story_orchestrator import get_story_orchestrator
 
-logger = logging.getLogger("sakhi.api.stories")
+logger = logging.getLogger("sakhi.api.story")
 
-router = APIRouter(tags=["stories"])
-
-
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-
-
-class TokenResponse(BaseModel):
-    token: str
-    room_name: str
-    livekit_url: str
-
-
-class StoryTokenRequest(BaseModel):
-    story_id: str   # Required — user must confirm the story before starting
-
-
-class CreateStoryRequest(BaseModel):
-    title: str
-    genre: str = "general"
-    age_min: int = 4
-    age_max: int = 12
-    language: str = "English"
-    segments: list[str]
+router = APIRouter(prefix="/api/stories", tags=["story"])
 
 
 # ---------------------------------------------------------------------------
-# Browse: random story preview
+# Request / Response models
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/stories/random")
-async def random_story(
-    genre: str = "",
-    age: int = 0,
-    language: str = "English",
-):
-    """Return a random story matching the genre/age filters.
+class StoryGenerateRequest(BaseModel):
+    """Request body for multi-modal story generation."""
 
-    The frontend shows the title to the user. If they like it, they call
-    POST /api/story-token with the returned story_id. If not, they call
-    this endpoint again to get another random story.
-    """
-    story = await get_random_story(
-        genre=genre or None,
-        age=age or None,
-        language=language,
+    idea: str = Field(
+        ...,
+        description="The user's story concept or idea.",
+        min_length=3,
+        max_length=500,
+        examples=["A brave little elephant who wants to fly"],
     )
-    if not story:
-        raise HTTPException(
-            status_code=404,
-            detail="No stories found matching the given filters."
-        )
-    return story   # {id, title, genre, age_min, age_max, total_segments}
+    genre: str = Field(
+        default="adventure",
+        description="Story genre — e.g. 'adventure', 'fable', 'fantasy', 'mystery', 'comedy'.",
+        max_length=50,
+        examples=["adventure"],
+    )
+    num_scenes: int = Field(
+        default=4,
+        description="Number of story scenes/paragraphs to generate (2–8).",
+        ge=2,
+        le=8,
+    )
+    child_age: int = Field(
+        default=8,
+        description="Target child's age for vocabulary calibration (4–12).",
+        ge=4,
+        le=12,
+    )
+    setting: str = Field(
+        default="Indian or universal",
+        description="Cultural / geographic context hint (e.g. 'Indian', 'jungle', 'space').",
+        max_length=100,
+    )
+    aspect_ratio: str = Field(
+        default="16:9",
+        description="Image aspect ratio for Flux generation.",
+        pattern=r"^\d+:\d+$",
+        examples=["16:9", "1:1", "4:3"],
+    )
+    output_format: str = Field(
+        default="webp",
+        description="Image output format — 'webp', 'jpg', or 'png'.",
+        pattern=r"^(webp|jpg|png)$",
+    )
+
+
+class StoryScene(BaseModel):
+    """A single fully-assembled story scene (text + illustration URL)."""
+
+    scene_number: int
+    story_text: str = Field(description="Narrative paragraph for this scene.")
+    image_prompt: str = Field(description="The Flux prompt used to generate the illustration.")
+    image_url: str | None = Field(
+        default=None,
+        description="URL of the generated illustration, or null if generation failed.",
+    )
+    audio_url: str | None = Field(
+        default=None,
+        description="URL of the generated TTS speech audio, or null if generation failed.",
+    )
+
+
+class StoryGenerateResponse(BaseModel):
+    """Response payload for a fully generated multi-modal story."""
+
+    title: str = Field(description="The generated story title.")
+    scenes: list[StoryScene] = Field(description="Ordered list of story scenes.")
+    total_scenes: int = Field(description="Total number of scenes in the story.")
+    images_generated: int = Field(
+        description="Number of scenes that have a successfully generated image URL."
+    )
+    audio_generated: int = Field(
+        description="Number of scenes that have a successfully generated audio URL."
+    )
+
+
+class StoryHealthResponse(BaseModel):
+    """Health check response for the story generation feature."""
+
+    status: str
+    image_generation_available: bool
+    message: str
 
 
 # ---------------------------------------------------------------------------
-# Story detail
+# Routes
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/stories/{story_id}")
-async def get_story_detail(story_id: str):
-    """Get metadata for a confirmed story (title, genre, segments count)."""
-    story = await get_story(story_id)
-    if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
-    return story
-
-
-# ---------------------------------------------------------------------------
-# Story session token — starts the LiveKit narration session
-# ---------------------------------------------------------------------------
-
-
-@router.post("/api/story-token", response_model=TokenResponse)
-async def create_story_token(
-    req: StoryTokenRequest,
+@router.post("/generate", response_model=StoryGenerateResponse, status_code=200)
+async def generate_story(
+    req: StoryGenerateRequest,
     claims: dict = Depends(require_profile_token),
-):
-    """Generate a LiveKit room token for a confirmed Story Narration session.
-
-    The story_id is required — the user must have already previewed and
-    confirmed the story before calling this endpoint.
-    
-    Room metadata includes story_id so the story-agent can pre-fetch all 
-    segments at session start. No DB calls happen during narration.
+) -> StoryGenerateResponse:
     """
-    if claims.get("profile_type") != "child":
-        raise HTTPException(
-            status_code=403, detail="Only child profiles can start story sessions"
-        )
+    Generate a complete multi-modal story from a simple idea.
 
-    # Validate story exists
-    story = await get_story(req.story_id)
-    if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+    This endpoint orchestrates the full AI pipeline:
+    1. Calls Groq to generate structured story scenes + image prompts (as strict JSON).
+    2. Runs all image generation calls concurrently via Replicate / Flux Schnell.
+    3. Returns the assembled text + image URLs payload.
 
-    profile = await get_current_profile(claims["profile_id"])
-    child_name = profile.get("display_name", "buddy")
-    child_age = profile.get("age") or 8
+    Partial results are returned gracefully — if some image generation calls
+    fail, the story text is still returned with ``image_url: null`` for those
+    scenes. The client should handle null image URLs gracefully (e.g. show a
+    placeholder illustration).
 
-    livekit_url = os.getenv("LIVEKIT_URL")
-    api_key = os.getenv("LIVEKIT_API_KEY")
-    api_secret = os.getenv("LIVEKIT_API_SECRET")
-
-    if not all([livekit_url, api_key, api_secret]):
-        raise HTTPException(status_code=500, detail="LiveKit credentials not configured")
-
-    room_name = f"story-{child_name.lower().replace(' ', '-')}-{int(time.time())}"
-
-    room_metadata = json.dumps({
-        "child_name": child_name,
-        "child_age": child_age,
-        "child_language": "English",
-        "profile_id": claims["profile_id"],
-        "story_id": req.story_id,
-        "story_title": story["title"],
-    })
-
-    token = (
-        api.AccessToken(api_key, api_secret)
-        .with_identity(f"child-{child_name.lower().replace(' ', '-')}")
-        .with_name(child_name)
-        .with_grants(api.VideoGrants(room_join=True, room=room_name))
-        .with_metadata(room_metadata)
+    Note: This endpoint may take 30–60 seconds depending on the number of
+    scenes and Replicate cold-start times.
+    """
+    logger.info(
+        f"Story generation requested by profile {claims.get('profile_id', 'unknown')}: "
+        f"idea='{req.idea[:60]}' genre={req.genre} scenes={req.num_scenes}"
     )
+
+    orchestrator = get_story_orchestrator()
 
     try:
-        lkapi = api.LiveKitAPI()
-        await lkapi.room.create_room(
-            api.CreateRoomRequest(name=room_name, metadata=room_metadata)
-        )
-        await lkapi.agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(agent_name="story-agent", room=room_name)
-        )
-        await lkapi.aclose()
-        logger.info(f"Story room '{room_name}' created for story '{story['title']}'")
-    except Exception as e:
-        logger.error(f"Failed to dispatch story agent: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to dispatch story agent: {e}")
-
-    return TokenResponse(
-        token=token.to_jwt(),
-        room_name=room_name,
-        livekit_url=livekit_url,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Admin CRUD (no auth for MVP)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/api/stories")
-async def get_stories(genre: str = "", age: int = 0, language: str = "English"):
-    """List all stories, optionally filtered by genre/age/language."""
-    results = await list_stories(
-        genre=genre or None,
-        age=age or None,
-        language=language,
-    )
-    return {"stories": results, "total": len(results)}
-
-
-@router.post("/api/stories", status_code=201)
-async def create_new_story(req: CreateStoryRequest):
-    """Admin: Create a new story with ordered text segments.
-    
-    NOTE: No auth for MVP — add API-key protection before production.
-    """
-    if not req.segments:
-        raise HTTPException(status_code=422, detail="At least one segment required")
-    try:
-        result = await create_story(
-            title=req.title,
+        result = await orchestrator.generate_story(
+            idea=req.idea,
             genre=req.genre,
-            age_min=req.age_min,
-            age_max=req.age_max,
-            language=req.language,
-            segments=req.segments,
+            num_scenes=req.num_scenes,
+            child_age=req.child_age,
+            setting=req.setting,
+            aspect_ratio=req.aspect_ratio,
+            output_format=req.output_format,
         )
-        logger.info(f"Admin created story '{req.title}' ({len(req.segments)} segments)")
-        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Story generation pipeline error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Story generation failed: {e}. "
+                "This may be a temporary issue — please try again."
+            ),
+        )
     except Exception as e:
-        logger.error(f"Failed to create story: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error in story generation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An unexpected error occurred during story generation.",
+        )
+
+    return StoryGenerateResponse(
+        title=result["title"],
+        scenes=[StoryScene(**scene) for scene in result["scenes"]],
+        total_scenes=result["total_scenes"],
+        images_generated=result["images_generated"],
+        audio_generated=result["audio_generated"],
+    )
+
+
+@router.get("/health", response_model=StoryHealthResponse)
+async def story_health(
+    claims: dict = Depends(require_profile_token),
+) -> StoryHealthResponse:
+    """
+    Check whether the story generation feature is fully operational.
+
+    Returns availability status for the image generation service.
+    The frontend can use this to show or hide the story generation UI,
+    or to warn users if images won't be available.
+    """
+    import os
+
+    image_generation_available = bool(os.getenv("REPLICATE_API_TOKEN"))
+
+    if image_generation_available:
+        message = "Story generation is fully operational with text + image support."
+    else:
+        message = (
+            "Story generation is available (text only). "
+            "Set REPLICATE_API_TOKEN to enable image illustrations."
+        )
+
+    return StoryHealthResponse(
+        status="ok",
+        image_generation_available=image_generation_available,
+        message=message,
+    )
