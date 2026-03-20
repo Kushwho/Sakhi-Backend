@@ -117,8 +117,6 @@ MIGRATIONS = [
     """
     CREATE EXTENSION IF NOT EXISTS vector;
     """,
-    # ------- recreate memories table with correct 768-dim vectors -------
-    "DROP TABLE IF EXISTS memories CASCADE;",
     # ------- memories (long-term memory store) -------
     """
     CREATE TABLE IF NOT EXISTS memories (
