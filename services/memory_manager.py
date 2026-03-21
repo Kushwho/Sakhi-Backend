@@ -20,6 +20,7 @@ Usage:
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -107,6 +108,17 @@ class ExtractedMemory(BaseModel):
         return v
 
 
+_embedding_model = None
+
+
+def _get_embedding_model():
+    """Lazy-load the sentence-transformers model on first use."""
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        logger.info("Loaded embedding model: all-MiniLM-L6-v2 (384-dim)")
+    return _embedding_model
 # ---------------------------------------------------------------------------
 # MemoryManager
 # ---------------------------------------------------------------------------
@@ -145,18 +157,15 @@ class MemoryManager:
             logger.info("MemoryManager DB pool created")
         return self._db_pool
 
+    
+
     # ── Embedding ──────────────────────────────────────────────────────
 
-    async def generate_embedding(self, text: str) -> list[float]:
-        """Generate a 768-dim embedding vector via Replicate API."""
-        output = await replicate.async_run(
-            "replicate/all-mpnet-base-v2:b6b7585c9640cd7a9572c6e129c9549d79c9c31f0d3fdce7baac7c67ca38f305",
-            input={"text": text},
-        )
-        # output is a list of dicts with "embedding" key, or a flat list
-        if isinstance(output, list) and output and isinstance(output[0], dict):
-            return output[0]["embedding"]
-        return list(output)
+    def generate_embedding(self, text: str) -> list[float]:
+        """Generate a 384-dim embedding vector for the given text."""
+        model = _get_embedding_model()
+        embedding = model.encode(text, normalize_embeddings=True)
+        return embedding.tolist()
 
     # ── Extraction (background, post-session) ──────────────────────────
 
@@ -200,9 +209,8 @@ class MemoryManager:
             content = mem.get("content", "").strip()
             if not content or len(content) < 5:
                 continue
-
             try:
-                embedding = await self.generate_embedding(content)
+                embedding = self.generate_embedding(content)
                 was_new = await self._deduplicate_and_store(
                     pool=pool,
                     profile_id=profile_id,
@@ -321,6 +329,8 @@ class MemoryManager:
                     continue
                 speaker = "CHILD" if role == "user" else "SAKHI"
                 lines.append(f"{speaker}: {text}")
+
+                
             transcript_text = "\n".join(lines) if lines else "No conversation content."
 
             client = AsyncGroq()

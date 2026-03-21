@@ -10,6 +10,7 @@ NOTE: This runs inside the agent process (not FastAPI), so it creates
 its own DB pool instead of using the shared FastAPI pool.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -178,19 +179,12 @@ async def summarize_session(
         f"alerts={len(summary.get('alerts', []))}"
     )
 
-    # Extract and store long-term memories (background, non-blocking)
-    try:
-        from services.memory_manager import MemoryManager
-
-        memory_mgr = MemoryManager()
-        memories_stored = await memory_mgr.extract_and_store(
-            profile_id=profile_id,
-            service="sakhi",
-            transcript=transcript,
-        )
-        logger.info(f"Long-term memories stored: {len(memories_stored)} items")
-    except Exception as e:
-        logger.warning(f"Memory extraction failed (non-blocking): {e}")
+    # Extract and store long-term memories in a background task
+    # so the HTTP response returns immediately
+    asyncio.create_task(
+        _extract_memories_background(profile_id, transcript),
+        name=f"memory-extraction-{room_name}",
+    )
 
     return {
         "session_id": str(session_id),
@@ -204,6 +198,44 @@ async def summarize_session(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+# Extract and store long-term memories in a background task
+    # so the HTTP response returns immediately
+    asyncio.create_task(
+        _extract_memories_background(profile_id, transcript),
+        name=f"memory-extraction-{room_name}",
+    )
+
+    return {
+        "session_id": str(session_id),
+        "duration_secs": duration_secs,
+        "mood_summary": summary.get("mood_summary", ""),
+        "topics": summary.get("topics", []),
+        "alerts": summary.get("alerts", []),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Internals
+# ---------------------------------------------------------------------------
+
+
+async def _extract_memories_background(profile_id: str, transcript: list[dict]):
+    """Fire-and-forget memory extraction so it never blocks the response."""
+    try:
+        from services.memory_manager import MemoryManager
+
+        memory_mgr = MemoryManager()
+        memories_stored = await memory_mgr.extract_and_store(
+            profile_id=profile_id,
+            service="sakhi",
+            transcript=transcript,
+        )
+        logger.info(f"Long-term memories stored: {len(memories_stored)} items")
+    except Exception:
+        logger.exception("Background memory extraction failed")
+
 
 
 async def _fetch_emotion_timeline(room_name: str) -> str:
