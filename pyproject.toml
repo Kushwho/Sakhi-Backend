@@ -193,6 +193,7 @@ dependencies = [
     "yarl==1.22.0",
     "zipp==3.23.0",
     "zstandard==0.25.0",
+    "sentence-transformers>=5.3.0",
 ]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
