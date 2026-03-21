@@ -186,3 +186,5 @@ __marimo__/
 
 # JetBrains / PyCharm
 # .idea/
+
+*.json
