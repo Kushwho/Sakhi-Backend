@@ -188,4 +188,5 @@ __marimo__/
 # .idea/
 
 *.json
+# .idea/*.json
 
