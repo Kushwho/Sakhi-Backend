@@ -1,45 +1,39 @@
 #!/bin/bash
 # ============================================================================
 # Sakhi Backend — Startup Script
-# Runs FastAPI (token server) + LiveKit Voice Agent + Emotion Detector
+# Runs FastAPI (token server) + LiveKit Agent (voice + emotion detector)
 #
 # Strategy:
-#   1. Start the Voice Agent FIRST (in background) so it can begin registering
-#      with LiveKit Cloud while we wait.
-#   2. Start the Emotion Detector (in background) — separate AgentServer.
-#   3. Start the Story Agent (in background) — separate AgentServer.
-#   4. Give them time to fully initialize before accepting token requests.
-#   5. Start FastAPI LAST so tokens are only issued after agents are ready.
+#   1. Start the Agent FIRST (in background) — a single AgentServer that
+#      handles both "sakhi-agent" and "emotion-detector" dispatches.
+#   2. Give it time to fully initialize and register with LiveKit Cloud.
+#   3. Start FastAPI LAST so tokens are only issued after agents are ready.
 # ============================================================================
 
 set -e
 
 echo "Starting Sakhi Backend..."
 
-# Start the LiveKit Voice Agent in the background FIRST
-echo "Starting LiveKit Voice Agent..."
+# Start the LiveKit Agent in the background FIRST
+# One AgentServer handles both voice agent + emotion detector
+echo "Starting LiveKit Agent (voice + emotion)..."
 python agent.py start &
 AGENT_PID=$!
 
-# Start the Emotion Detector in the background
-echo "Starting Emotion Detector..."
-python emotion_detector.py start &
-EMOTION_PID=$!
-
-# Wait for the agent workers to register with LiveKit Cloud
-echo "Waiting for agents to initialize and register..."
+# Wait for the agent worker to register with LiveKit Cloud
+# FastAPI must NOT start before this, or token dispatches will be dropped
+echo "Waiting for agent to initialize and register..."
 sleep 30
 
 # Now start the FastAPI token server in the background
-# By this point the agents are registered and ready to accept dispatches
 echo "Starting FastAPI on port 8000 using run.py..."
 python run.py &
 FASTAPI_PID=$!
 
 # Wait for any process to exit
-wait -n $AGENT_PID $EMOTION_PID $FASTAPI_PID 2>/dev/null || true
+wait -n $AGENT_PID $FASTAPI_PID 2>/dev/null || true
 
-# If one exits, clean up the others
+# If one exits, clean up the other
 echo "A process exited, shutting down..."
-kill $AGENT_PID $EMOTION_PID $FASTAPI_PID 2>/dev/null || true
+kill $AGENT_PID $FASTAPI_PID 2>/dev/null || true
 wait

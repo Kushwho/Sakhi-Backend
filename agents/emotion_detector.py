@@ -1,25 +1,23 @@
 """
 Sakhi Emotion Detector — Programmatic Participant
 ===================================================
-Separate AgentServer that detects child emotions via Hume's prosody API.
-Joins the LiveKit room alongside the voice agent, subscribes to child audio,
-and sends detected emotions to the frontend, the voice agent, AND persists
-them to the database for the parent dashboard.
+Detects child emotions via Hume's prosody API. Joins the LiveKit room
+alongside the voice agent, subscribes to child audio, and sends detected
+emotions to the frontend, the voice agent, AND persists them to the
+database for the parent dashboard.
 
-Run via root entrypoint: ``python emotion_detector.py start``
+This module does NOT create its own AgentServer. The handler is registered
+on the shared ``server`` in ``agents/sakhi.py`` so that both the voice
+agent and emotion detector are deployed as a single LiveKit agent.
 """
 
 import json
 import logging
 import os
 
-from dotenv import load_dotenv
 from livekit import agents, rtc
-from livekit.agents import AgentServer
 
 from utils.logging_config import setup_logging
-
-load_dotenv(".env.local")
 
 # Configure logging at module level — LiveKit dev mode spawns a child
 # worker that imports this module but doesn't run __main__.
@@ -28,7 +26,7 @@ setup_logging()
 logger = logging.getLogger("sakhi.emotion")
 
 # ---------------------------------------------------------------------------
-# Database helpers (separate pool — this is its own OS process)
+# Database helpers (lazy-init pool shared within the worker process)
 # ---------------------------------------------------------------------------
 
 _db_pool = None
@@ -81,13 +79,10 @@ async def _persist_emotion(
 
 
 # ---------------------------------------------------------------------------
-# Emotion Detector — Programmatic Participant
+# Emotion Detector — Programmatic Participant (handler only, no server)
 # ---------------------------------------------------------------------------
 
-emotion_server = AgentServer()
 
-
-@emotion_server.rtc_session(agent_name="emotion-detector")
 async def emotion_detector_entrypoint(ctx: agents.JobContext):
     """Programmatic participant: detects child emotions via Hume prosody API.
 

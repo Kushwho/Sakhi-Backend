@@ -196,6 +196,13 @@ class SakhiAgent(Agent):
 
 server = AgentServer()
 
+# Register the emotion detector as a second handler on the SAME server.
+# This way both "sakhi-agent" and "emotion-detector" are served by one
+# deployed agent, using a single LiveKit Cloud agent slot.
+from agents.emotion_detector import emotion_detector_entrypoint
+
+server.rtc_session(agent_name="emotion-detector")(emotion_detector_entrypoint)
+
 
 @server.rtc_session(agent_name="sakhi-agent")
 async def sakhi_entrypoint(ctx: agents.JobContext):
