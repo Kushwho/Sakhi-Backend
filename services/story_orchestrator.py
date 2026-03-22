@@ -35,12 +35,14 @@ so the caller always gets a usable image URL.
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any
 
 from services.image_generation import get_image_service
 from services.llm import get_llm_client
 from services.tts_generation import get_tts_service
 from services.storage import get_storage_service
+from db.pool import get_pool
 
 logger = logging.getLogger("sakhi.story_orchestrator")
 
@@ -131,6 +133,7 @@ class StoryOrchestrationService:
         setting: str = DEFAULT_SETTING,
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         output_format: str = DEFAULT_OUTPUT_FORMAT,
+        profile_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate a complete multi-modal story from a simple idea.
@@ -239,13 +242,63 @@ class StoryOrchestrationService:
             f"{audio_generated}/{len(assembled_scenes)} audio files."
         )
 
-        return {
+        result = {
             "title": title,
             "scenes": assembled_scenes,
             "total_scenes": len(assembled_scenes),
             "images_generated": images_generated,
             "audio_generated": audio_generated,
         }
+
+        # Persist the story to the DB so a child can view it later.
+        # Run as a background task so it never delays the response.
+        if profile_id:
+            asyncio.create_task(
+                self._save_story(profile_id=profile_id, idea=idea, genre=genre, result=result),
+                name=f"save-story-{profile_id[:8]}",
+            )
+
+        return result
+
+    # -----------------------------------------------------------------------
+    # Private persistence helper
+    # -----------------------------------------------------------------------
+
+    async def _save_story(
+        self,
+        profile_id: str,
+        idea: str,
+        genre: str,
+        result: dict,
+    ) -> str | None:
+        """Persist a generated story to the ``stories`` table.
+
+        Returns the new story UUID string, or ``None`` if the insert fails.
+        """
+        try:
+            pool = get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO stories
+                        (profile_id, title, genre, idea,
+                         total_segments, scenes_payload)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    RETURNING id
+                    """,
+                    uuid.UUID(profile_id),
+                    result["title"],
+                    genre,
+                    idea,
+                    result["total_scenes"],
+                    json.dumps(result["scenes"]),
+                )
+            story_id = str(row["id"])
+            logger.info(f"Story persisted: {story_id} — '{result['title']}'")
+            return story_id
+        except Exception:
+            logger.exception("Failed to persist generated story")
+            return None
 
     # -----------------------------------------------------------------------
     # Private media helpers
