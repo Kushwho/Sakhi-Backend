@@ -3,6 +3,7 @@
 # Sakhi Backend — Startup Script
 # Runs FastAPI (token server) + LiveKit Agent (voice + emotion detector)
 #
+
 # Strategy:
 #   1. Start the Agent FIRST (in background) — a single AgentServer that
 #      handles both "sakhi-agent" and "emotion-detector" dispatches.
