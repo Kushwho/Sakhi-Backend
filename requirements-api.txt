@@ -39,3 +39,4 @@ aiofiles
 requests
 
 boto3>=1.35.0
+google-cloud-storage

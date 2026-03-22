@@ -33,7 +33,7 @@ from services.emotion_detector import EmotionState, run_emotion_detector
 from services.prompts import build_system_prompt
 from services.logging_config import setup_logging
 
-load_dotenv(".env.local")
+load_dotenv(".env")
 
 # Configure logging at module level — the LiveKit dev mode spawns a child
 # worker process that imports this module but does NOT run __main__, so

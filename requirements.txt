@@ -29,3 +29,4 @@ boto3>=1.35.0
 httpx
 groq
 pytest-asyncio
+google-cloud-storage

@@ -8,7 +8,7 @@ Usage:
     python scripts/seed_swys_images.py
 
 Requires:
-    - DATABASE_URL and REPLICATE_API_TOKEN set in .env.local
+    - DATABASE_URL and REPLICATE_API_TOKEN set in .env
     - replicate package installed  (uv sync or pip install replicate)
 """
 
@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from db.migrations import run_migrations
 from services.r2 import get_r2_client, swys_seed_key
 
-load_dotenv(".env.local")
+load_dotenv(".env")
 
 REPLICATE_MODEL = "black-forest-labs/flux-schnell"
 

@@ -3,7 +3,8 @@ Sakhi — Text To Speech Service
 ===================================
 Standalone service for AI text-to-speech generation via Replicate API.
 
-Model: jaaari/kokoro-82m (Fast, high-quality Kokoro TTS)
+Model: inworld/tts-1.5-mini (Low-latency, expressive TTS — ~130ms P90)
+Voice: Ashley (default)
 
 Environment variable required:
   REPLICATE_API_TOKEN
@@ -19,8 +20,8 @@ import httpx
 logger = logging.getLogger("sakhi.tts_generation")
 
 REPLICATE_API_BASE = "https://api.replicate.com/v1"
-# Target model: Kokoro 82M
-TTS_MODEL = "jaaari/kokoro-82m"
+# Target model: Inworld TTS 1.5 Mini
+TTS_MODEL = "inworld/tts-1.5-mini"
 
 _POLL_INTERVAL_S = 1.0
 _MAX_POLL_ATTEMPTS = 60
@@ -35,16 +36,16 @@ class TTSGenerationService:
     async def generate_speech(
         self,
         text: str,
-        voice: str = "af_alloy",
+        voice: str = "Ashley",
         speed: float = 1.0,
     ) -> str | None:
         """
-        Generate speech from text using the Kokoro model via Replicate API.
+        Generate speech from text using Inworld TTS 1.5 Mini via Replicate API.
 
         Args:
             text: Text to synthesize.
-            voice: The voice ID to use (e.g., 'af_heart', 'am_adam').
-            speed: Playback speed.
+            voice: The voice ID to use (e.g., 'Ashley', 'Dennis', 'Alex', 'Darlene').
+            speed: Speaking rate (0.5–1.5, default 1.0).
 
         Returns:
             The URL of the generated audio file (.mp3 or .wav), or None on failure.
@@ -80,21 +81,20 @@ class TTSGenerationService:
         headers = {
             "Authorization": f"Bearer {self._api_token}",
             "Content-Type": "application/json",
+            "Prefer": "wait",
         }
-        # jaaari/kokoro-82m version ID
-        model_version = "f559560eb822dc509045f3921a1921234918b91739db4bf3daab2169b71c7a13"
         payload = {
-            "version": model_version,
             "input": {
                 "text": text,
                 "voice": voice,
-                "speed": speed,
+                "format": "mp3",
+                "speaking_rate": speed,
             }
         }
         try:
             async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_S) as client:
                 response = await client.post(
-                    f"{REPLICATE_API_BASE}/predictions",
+                    f"{REPLICATE_API_BASE}/models/{TTS_MODEL}/predictions",
                     headers=headers,
                     json=payload,
                 )
