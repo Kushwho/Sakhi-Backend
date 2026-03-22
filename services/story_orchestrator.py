@@ -5,15 +5,15 @@ Generates multi-modal children's stories (text + images) on demand using:
   • Groq (via existing SakhiLLM layer) for structured scene generation
   • ImageGenerationService (Replicate / Flux Schnell) for per-scene illustrations
   • TTSService for per-scene audio narration
-  • GCPStorageService for caching all media assets
+  • R2Client for caching all media assets
 
 Pipeline:
   1. Accept user's story idea + parameters (genre, num_scenes, child_age)
   2. Call Groq with a strict JSON schema prompt → get back story title + scenes
   3. Parse and validate the JSON response
   4. For each scene sequentially:
-     a. Generate image → immediately upload to GCP (before URL expires ~60s)
-     b. Generate TTS audio → upload to GCP
+     a. Generate image → immediately upload to R2 (before URL expires ~60s)
+     b. Generate TTS audio → upload to R2
   5. Stitch all URLs back to their respective scenes
   6. Return the fully assembled multi-modal payload
 
@@ -27,8 +27,8 @@ Each scene in the output payload:
   }
 
 KEY FIX: Replicate delivery URLs expire in ~60 seconds. The image must be
-downloaded and uploaded to GCP IMMEDIATELY after generation — before any TTS
-call adds delay. If GCP upload fails, we fall back to the raw Replicate URL
+downloaded and uploaded to R2 IMMEDIATELY after generation — before any TTS
+call adds delay. If R2 upload fails, we fall back to the raw Replicate URL
 so the caller always gets a usable image URL.
 """
 
@@ -41,7 +41,7 @@ from typing import Any
 from services.image_generation import get_image_service
 from services.llm import get_llm_client
 from services.tts_generation import get_tts_service
-from services.storage import get_storage_service
+from services.r2 import get_r2_client
 from db.pool import get_pool
 
 logger = logging.getLogger("sakhi.story_orchestrator")
@@ -118,7 +118,7 @@ class StoryOrchestrationService:
         self._llm = get_llm_client()
         self._image_service = get_image_service()
         self._tts_service = get_tts_service()
-        self._storage = get_storage_service()
+        self._storage = get_r2_client()
 
     # -----------------------------------------------------------------------
     # Public API
@@ -157,8 +157,8 @@ class StoryOrchestrationService:
                       "scene_number": 1,
                       "story_text": "Once upon a time...",
                       "image_prompt": "Vivid illustration of...",
-                      "image_url": "https://storage.googleapis.com/...",  # or raw Replicate URL
-                      "audio_url": "https://storage.googleapis.com/..."   # or None
+                      "image_url": "https://pub-xxxxxx.r2.dev/...",  # or raw Replicate URL
+                      "audio_url": "https://pub-xxxxxx.r2.dev/..."   # or None
                     },
                     ...
                   ],
@@ -201,10 +201,10 @@ class StoryOrchestrationService:
         logger.info(f"Story structure ready: '{title}' — {len(scenes_data)} scenes")
 
         # ── Step 2 & 3: Generate media sequentially ───────────────────────────
-        # IMPORTANT: For each scene, generate the image and upload it to GCP
+        # IMPORTANT: For each scene, generate the image and upload it to R2
         # IMMEDIATELY before doing anything else (especially TTS). Replicate
         # delivery URLs expire in ~60 seconds — if TTS runs first, the image
-        # URL may be dead by the time we try to download it for GCP upload.
+        # URL may be dead by the time we try to download it for R2 upload.
         assembled_scenes = []
         for i, scene in enumerate(scenes_data, start=1):
             logger.info(f"Processing media for Scene {i}/{len(scenes_data)}...")
@@ -312,17 +312,17 @@ class StoryOrchestrationService:
         output_format: str,
     ) -> str | None:
         """
-        Generate an image via Replicate and immediately upload it to GCP.
+        Generate an image via Replicate and immediately upload it to R2.
 
         The upload happens RIGHT AFTER generation because Replicate delivery
         URLs expire in ~60 seconds. Any delay (e.g. a TTS call) risks the
         URL becoming unreachable before we can download it.
 
-        Falls back to the raw Replicate URL if GCP upload fails, so the
+        Falls back to the raw Replicate URL if R2 upload fails, so the
         caller always gets a usable URL when generation succeeds.
 
         Returns:
-            GCP public URL (preferred), raw Replicate URL (fallback), or
+            R2 public URL (preferred), raw Replicate URL (fallback), or
             None if image generation itself failed.
         """
         if not image_prompt:
@@ -341,24 +341,26 @@ class StoryOrchestrationService:
 
         logger.debug(f"Scene {scene_number}: raw image URL received, uploading to GCP immediately...")
 
-        # Upload to GCP right away — before any other async work for this scene
-        gcp_url = await self._storage.upload_from_url(
-            url=raw_image_url,
-            destination_folder="story_images",
-            file_ext=f".{output_format}",
-        )
-
-        if gcp_url:
-            logger.info(f"Scene {scene_number}: image cached at GCP → {gcp_url[:80]}...")
-            return gcp_url
-
-        # GCP upload failed — fall back to the raw Replicate URL.
-        # It may still be alive for a short time; better than returning None.
-        logger.warning(
-            f"Scene {scene_number}: GCP upload failed, falling back to raw Replicate URL. "
-            f"This URL will expire shortly: {raw_image_url[:80]}..."
-        )
-        return raw_image_url
+        # Upload to R2 right away — before any other async work for this scene
+        image_key = f"story_images/{uuid.uuid4()}.{output_format}"
+        content_type = f"image/{'jpeg' if output_format.lower() in ('jpg', 'jpeg') else output_format.lower()}"
+        
+        try:
+            r2_url = await self._storage.upload_from_url(
+                source_url=raw_image_url,
+                r2_key=image_key,
+                content_type=content_type,
+            )
+            logger.info(f"Scene {scene_number}: image cached at R2 → {r2_url[:80]}...")
+            return r2_url
+        except Exception:
+            # R2 upload failed — fall back to the raw Replicate URL.
+            # It may still be alive for a short time; better than returning None.
+            logger.exception(
+                f"Scene {scene_number}: R2 upload failed, falling back to raw Replicate URL. "
+                f"This URL will expire shortly: {raw_image_url[:80]}..."
+            )
+            return raw_image_url
 
     async def _generate_and_cache_audio(
         self,
@@ -366,13 +368,13 @@ class StoryOrchestrationService:
         story_text: str,
     ) -> str | None:
         """
-        Generate TTS audio and upload it to GCP.
+        Generate TTS audio and upload it to R2.
 
         TTS URLs also tend to be ephemeral, so we upload immediately.
-        Falls back to the raw TTS URL if GCP upload fails.
+        Falls back to the raw TTS URL if R2 upload fails.
 
         Returns:
-            GCP public URL (preferred), raw TTS URL (fallback), or
+            R2 public URL (preferred), raw TTS URL (fallback), or
             None if TTS generation itself failed.
         """
         if not story_text:
@@ -389,21 +391,22 @@ class StoryOrchestrationService:
             logger.error(f"Scene {scene_number}: TTS generation returned None")
             return None
 
-        gcp_url = await self._storage.upload_from_url(
-            url=raw_audio_url,
-            destination_folder="story_audio",
-            file_ext=".wav",
-        )
-
-        if gcp_url:
-            logger.info(f"Scene {scene_number}: audio cached at GCP → {gcp_url[:80]}...")
-            return gcp_url
-
-        logger.warning(
-            f"Scene {scene_number}: GCP audio upload failed, falling back to raw TTS URL. "
-            f"URL: {raw_audio_url[:80]}..."
-        )
-        return raw_audio_url
+        audio_key = f"story_audio/{uuid.uuid4()}.wav"
+        
+        try:
+            r2_url = await self._storage.upload_from_url(
+                source_url=raw_audio_url,
+                r2_key=audio_key,
+                content_type="audio/wav",
+            )
+            logger.info(f"Scene {scene_number}: audio cached at R2 → {r2_url[:80]}...")
+            return r2_url
+        except Exception:
+            logger.exception(
+                f"Scene {scene_number}: R2 audio upload failed, falling back to raw TTS URL. "
+                f"URL: {raw_audio_url[:80]}..."
+            )
+            return raw_audio_url
 
     # -----------------------------------------------------------------------
     # Private story structure helper
