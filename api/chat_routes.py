@@ -4,9 +4,11 @@ Sakhi — Chat API Routes (LangGraph-powered)
 REST endpoints for the text-based chat mode.
 
 Endpoints:
-  - ``POST /api/chat/send``    — stream a single assistant reply
-  - ``POST /api/chat/history`` — retrieve the message history for a thread
-  - ``POST /api/chat/end``     — summarise and persist a finished session
+  - ``POST /api/chat/send``          — stream a single assistant reply
+  - ``POST /api/chat/history``       — retrieve message history for a thread (by thread_id)
+  - ``POST /api/chat/end``           — summarise and persist a finished session
+  - ``GET  /api/chat/sessions``      — list all past sessions for the child
+  - ``GET  /api/chat/sessions/{id}`` — read a specific past session's transcript
 
 All LLM calls go through the centralized ``SakhiLLM`` layer via a LangGraph
 ``StateGraph``.  Conversation memory is backed by a PostgreSQL checkpointer.
@@ -17,12 +19,13 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.dependencies import require_profile_token
 from services.chat_graph import get_chat_graph
+from services.chat_sessions import get_chat_session, list_chat_sessions
 from services.profiles import get_current_profile
 from services.session_summarizer import summarize_session
 
@@ -215,3 +218,62 @@ async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(requir
     except Exception as e:
         logger.error(f"Failed to end chat session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to save chat summary") from e
+
+
+# ---------------------------------------------------------------------------
+# GET /api/chat/sessions — list all past sessions for this child
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sessions")
+async def list_sessions(
+    limit: int = Query(20, ge=1, le=100, description="Max sessions to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    claims: dict = Depends(require_profile_token),
+) -> dict:
+    """Return a paginated list of all past chat sessions for the child.
+
+    Sessions are ordered newest-first.  Each item includes the ``thread_id``
+    which can be passed to ``POST /api/chat/send`` to continue the
+    conversation exactly where it left off.
+    """
+    if claims.get("profile_type") != "child":
+        raise HTTPException(status_code=403, detail="Only child profiles can list chat sessions")
+
+    sessions = await list_chat_sessions(
+        profile_id=claims["profile_id"],
+        limit=limit,
+        offset=offset,
+    )
+    return {"sessions": sessions, "total": len(sessions), "offset": offset}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/chat/sessions/{session_id} — read a specific past session
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sessions/{session_id}")
+async def get_session(
+    session_id: str,
+    claims: dict = Depends(require_profile_token),
+) -> dict:
+    """Return the full detail of a past chat session including the stored transcript.
+
+    The ``thread_id`` in the response can be used to resume the conversation
+    via ``POST /api/chat/send``.
+
+    Returns 404 if the session does not exist or belongs to another profile.
+    """
+    if claims.get("profile_type") != "child":
+        raise HTTPException(status_code=403, detail="Only child profiles can read chat sessions")
+
+    session = await get_chat_session(
+        session_id=session_id,
+        profile_id=claims["profile_id"],
+    )
+
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return session

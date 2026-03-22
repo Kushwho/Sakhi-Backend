@@ -245,6 +245,22 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_story_segments_lookup
         ON story_segments(story_id, position);
     """,
+    # ------- stories: user-generated story persistence columns -------
+    """
+    ALTER TABLE stories ADD COLUMN IF NOT EXISTS
+        profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE;
+    """,
+    """
+    ALTER TABLE stories ADD COLUMN IF NOT EXISTS idea TEXT;
+    """,
+    """
+    ALTER TABLE stories ADD COLUMN IF NOT EXISTS
+        scenes_payload JSONB DEFAULT '[]';
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_stories_profile
+        ON stories(profile_id, created_at DESC);
+    """,
 ]
 
 
