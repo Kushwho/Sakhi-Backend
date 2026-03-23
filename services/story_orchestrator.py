@@ -40,6 +40,7 @@ from typing import Any
 
 from services.image_generation import get_image_service
 from services.llm import get_llm_client
+from services.prompts import get_prompt_template
 from services.tts_generation import get_tts_service
 from services.r2 import get_r2_client
 from db.pool import get_pool
@@ -47,10 +48,10 @@ from db.pool import get_pool
 logger = logging.getLogger("sakhi.story_orchestrator")
 
 # ---------------------------------------------------------------------------
-# Groq system prompt — enforces strict JSON output schema
+# Groq system prompt — fetched from DB, hardcoded fallback
 # ---------------------------------------------------------------------------
 
-_STORY_SYSTEM_PROMPT = """\
+_FALLBACK_STORY_SYSTEM_PROMPT = """\
 You are a world-class children's story writer specialising in Indian children aged 4–12.
 
 Your task is to write a vivid, imaginative, age-appropriate short story based on the user's idea.
@@ -74,6 +75,10 @@ STRICT RULES:
 6. Do NOT include any text outside the JSON object.
 """
 
+
+def _get_story_system_prompt() -> str:
+    return get_prompt_template("story_writer") or _FALLBACK_STORY_SYSTEM_PROMPT
+
 _STORY_USER_PROMPT_TEMPLATE = """\
 Write a {genre} story for a {child_age}-year-old child about: "{idea}"
 
@@ -86,6 +91,51 @@ Requirements:
 
 Return the story as a JSON object following the schema in your instructions.
 """
+
+# ---------------------------------------------------------------------------
+# SSML / Emotion markup prompt — fetched from DB, hardcoded fallback
+# ---------------------------------------------------------------------------
+
+_FALLBACK_SSML_SYSTEM_PROMPT = """\
+You are a voice-acting director for a children's story narration engine.
+
+Your job is to take a plain story paragraph and add expressive markup tags so that \
+the TTS engine reads it with emotion, pauses, and natural delivery.
+
+AVAILABLE TAGS:
+- Emotions: [happy], [sad], [angry], [surprised], [fearful], [disgusted]
+- Delivery styles: [laughing], [whispering]
+- Non-verbal sounds: [breathe], [clear_throat], [cough], [laugh], [sigh], [yawn]
+- Pauses: <break time="1s" />, <break time="500ms" />
+
+RULES:
+1. Output ONLY the marked-up text. No explanations, no quotes, no preamble.
+2. Do NOT change any words in the original text. Only INSERT tags.
+3. Place emotion/delivery tags BEFORE the sentence or phrase they apply to.
+4. Use pauses at natural story beats — scene transitions, dramatic moments, dialogue boundaries.
+5. Do NOT over-tag. Use 2–5 tags per paragraph. Less is more.
+6. Non-verbal sounds should feel natural — a [sigh] before a sad moment, a [laugh] during a funny line.
+
+FEW-SHOT EXAMPLES:
+
+---
+Input: Rani looked up at the tall, tall mountain. "I can do this," she whispered to herself. She took a deep breath and began to climb.
+Output: Rani looked up at the tall, tall mountain. <break time="500ms" />[whispering] "I can do this," she whispered to herself. <break time="500ms" />[breathe] She took a deep breath and began to climb.
+---
+Input: The monkey swung from tree to tree, laughing as the birds chased him. "You can't catch me!" he shouted. But then he slipped and tumbled into the river with a big splash!
+Output: [happy] The monkey swung from tree to tree, [laughing] laughing as the birds chased him. "You can't catch me!" he shouted. <break time="500ms" />[surprised] But then he slipped and tumbled into the river with a big splash!
+---
+Input: The forest was dark and quiet. Arjun could hear his own heartbeat. Somewhere far away, an owl hooted. He wanted to go home.
+Output: The forest was dark and quiet. <break time="500ms" />[fearful] Arjun could hear his own heartbeat. <break time="1s" />Somewhere far away, an owl hooted. [sad] He wanted to go home.
+---
+Input: "We did it!" cheered Maya, jumping up and down. The whole village came out to celebrate. There was music, dancing, and the biggest feast anyone had ever seen.
+Output: [happy] "We did it!" cheered Maya, jumping up and down. <break time="500ms" />The whole village came out to celebrate. [laughing] There was music, dancing, and the biggest feast anyone had ever seen.
+---
+"""
+
+
+def _get_ssml_system_prompt() -> str:
+    return get_prompt_template("story_ssml") or _FALLBACK_SSML_SYSTEM_PROMPT
 
 # ---------------------------------------------------------------------------
 # Defaults and limits
@@ -218,11 +268,14 @@ class StoryOrchestrationService:
                 aspect_ratio=aspect_ratio,
                 output_format=output_format,
             )
-            # await asyncio.sleep(12)
-            # ── TTS: generate → upload (no expiry concern, safe to do after) ──
+
+            # ── SSML: enrich plain text with emotion/pause markup for TTS ──
+            tts_text = await self._add_ssml_markup(scene_number=i, story_text=story_text)
+
+            # ── TTS: generate → upload (uses SSML-enriched text, not plain) ──
             audio_url = await self._generate_and_cache_audio(
                 scene_number=i,
-                story_text=story_text,
+                story_text=tts_text,
             )
             # await asyncio.sleep(12)
             assembled_scenes.append({
@@ -383,7 +436,7 @@ class StoryOrchestrationService:
 
         raw_audio_url = await self._tts_service.generate_speech(
             text=story_text,
-            voice="af_alloy",
+            voice="Ashley",
             speed=1.0,
         )
 
@@ -407,6 +460,39 @@ class StoryOrchestrationService:
                 f"URL: {raw_audio_url[:80]}..."
             )
             return raw_audio_url
+
+    # -----------------------------------------------------------------------
+    # SSML markup helper
+    # -----------------------------------------------------------------------
+
+    async def _add_ssml_markup(self, scene_number: int, story_text: str) -> str:
+        """
+        Run the plain story text through an LLM pass to add expressive
+        SSML / emotion markup tags for the TTS engine.
+
+        If the LLM call fails, falls back to the original plain text so
+        that TTS still works (just without expressiveness).
+        """
+        if not story_text:
+            return story_text
+
+        try:
+            marked_up = await self._llm.generate_text(
+                prompt=story_text,
+                system_prompt=_get_ssml_system_prompt(),
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            marked_up = marked_up.strip()
+            if marked_up:
+                logger.info(f"Scene {scene_number}: SSML markup applied → {marked_up}")
+                return marked_up
+        except Exception as e:
+            logger.warning(
+                f"Scene {scene_number}: SSML markup failed, using plain text — {e}"
+            )
+
+        return story_text
 
     # -----------------------------------------------------------------------
     # Private story structure helper
@@ -442,7 +528,7 @@ class StoryOrchestrationService:
             # returns a parsed dict, and handles low-level errors.
             result = await self._llm.generate_json(
                 prompt=user_prompt,
-                system_prompt=_STORY_SYSTEM_PROMPT,
+                system_prompt=_get_story_system_prompt(),
                 temperature=0.75,    # slightly higher for creative variation
                 max_tokens=4096,     # enough for 8 scenes with detailed prompts
             )

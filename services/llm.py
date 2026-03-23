@@ -86,6 +86,50 @@ class SakhiLLM:
             raise
 
     # -----------------------------------------------------------------
+    # Plain text generation (used by SSML markup, etc.)
+    # -----------------------------------------------------------------
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 1000,
+    ) -> str:
+        """
+        Generate a plain text response from the LLM.
+
+        Args:
+            prompt: The user prompt or main instructions.
+            system_prompt: Optional system instructions.
+            temperature: Sampling temperature (default 0.3).
+            max_tokens: Maximum tokens to generate (default 1000).
+
+        Returns:
+            The raw text response string.
+
+        Raises:
+            Exception: If the underlying LLM call fails.
+        """
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content
+
+        except Exception as e:
+            logger.error(f"LLM text generation failed: {e}")
+            raise
+
+    # -----------------------------------------------------------------
     # Vision interface (used by SWYS judge, etc.)
     # -----------------------------------------------------------------
 
