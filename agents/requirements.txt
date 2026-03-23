@@ -1,0 +1,24 @@
+# LiveKit
+livekit==1.1.2
+livekit-agents==1.4.4
+livekit-api==1.1.0
+livekit-plugins-deepgram==1.4.4
+livekit-plugins-groq==1.4.4
+livekit-plugins-silero==1.4.4
+livekit-plugins-turn-detector==1.4.4
+
+# Groq LLM
+livekit-plugins-openai>=1.0.0
+
+
+# Hume AI
+hume>=0.13.0
+websockets>=12.0
+
+python-dotenv
+asyncpg
+groq
+replicate
+langchain_groq
+pydantic
+asyncio
