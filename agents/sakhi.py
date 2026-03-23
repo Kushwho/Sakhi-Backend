@@ -3,15 +3,16 @@ Sakhi Voice Agent — Agent Logic
 ================================
 SakhiAgent class with short-term memory and emotion-aware responses.
 
-Entrypoint: ``python agent.py dev`` (via root agent.py thin wrapper)
+Entrypoint: ``python sakhi.py start`` or ``python sakhi.py dev``
 """
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
 
 from dotenv import load_dotenv
-from livekit import agents
+from livekit import agents, rtc
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -28,8 +29,9 @@ from livekit.agents.voice.events import (
 from livekit.plugins import deepgram, groq, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from services.emotion_detector import EmotionState, run_emotion_detector
 from services.prompts import build_system_prompt
-from utils.logging_config import setup_logging
+from services.logging_config import setup_logging
 
 load_dotenv(".env.local")
 
@@ -65,6 +67,7 @@ class SakhiAgent(Agent):
         mode: str = "default",
         topic_context: dict | None = None,
         surprise_fact: str | None = None,
+        emotion_state: EmotionState | None = None,
     ) -> None:
         instructions = build_system_prompt(
             child_name=child_name,
@@ -79,9 +82,10 @@ class SakhiAgent(Agent):
         self.child_age = child_age
         self.child_language = child_language
         self._profile_id = profile_id
-        self._current_emotion: str | None = None
-        # One shared instance per session — DB pool and embedding model
-        # are created lazily on first use and reused across all turns.
+        # Shared state written by the emotion detector background task.
+        # Replaces the old participant-attribute roundtrip.
+        self._emotion_state: EmotionState = emotion_state or EmotionState()
+
         if profile_id:
             from services.memory_manager import MemoryManager
 
@@ -98,41 +102,30 @@ class SakhiAgent(Agent):
     ) -> None:
         """Inject the child's detected emotion into the LLM context.
 
-        The emotion detector programmatic participant sets its participant
-        attributes with the latest Hume prosody result. We read those
-        attributes here and add an ephemeral context message so the LLM
-        can respond empathetically.
+        Reads emotion directly from the shared EmotionState written by the
+        run_emotion_detector background task. No participant attribute scan
+        needed — the detector runs in-process.
         """
-        # Try to read emotion from the emotion detector's participant attributes
         logger.debug(
             f"on_user_turn_completed: child said: {new_message.text_content[:100] if new_message.text_content else '(empty)'}"
         )
-        try:
-            room = get_job_context().room
-            for participant in room.remote_participants.values():
-                attrs = participant.attributes
-                if attrs and "emotion" in attrs:
-                    self._current_emotion = attrs["emotion"]
-                    logger.info(f"Read emotion from detector: {self._current_emotion} (attrs={attrs})")
-                    break
-            else:
-                logger.debug("No emotion attribute found on any remote participant")
-        except Exception as e:
-            logger.warning(f"Failed to read emotion attributes: {e}")
 
-        if self._current_emotion:
-            logger.info(f"Injecting emotion context into LLM: {self._current_emotion}")
+        current_emotion = self._emotion_state.emotion
+        if current_emotion:
+            logger.info(f"Injecting emotion context into LLM: {current_emotion}")
             turn_ctx.add_message(
                 role="system",
                 content=(
                     f"[Emotion context — DO NOT read this aloud or mention it to the child] "
-                    f"The child's voice tone suggests they are feeling: {self._current_emotion}. "
+                    f"The child's voice tone suggests they are feeling: {current_emotion}. "
                     f"Adapt your response accordingly — be extra supportive "
                     f"if they sound sad or anxious, and match their energy "
                     f"if they sound excited or happy. "
                     f"Never reveal that you are detecting their emotions."
                 ),
             )
+        else:
+            logger.debug("No emotion detected yet — skipping emotion injection")
 
         # Recall relevant long-term memories based on what the child said
         if self._memory_mgr and self._profile_id and new_message.text_content:
@@ -183,25 +176,18 @@ class SakhiAgent(Agent):
             f"That way we can build on what you know!"
         )
 
-    # NOTE: log_emotion tool was removed — it exposed emotion vocabulary to the
-    # LLM, which caused it to speak emotion data aloud (e.g. "emotion: sad,
-    # intensity: 0.9"). Emotion detection is handled entirely by the separate
-    # emotion detector participant; the voice agent only receives the emotion
-    # name via participant attributes in on_user_turn_completed.
-
 
 # ---------------------------------------------------------------------------
-# LiveKit Agent Server
+# LiveKit Agent Server — single rtc_session registration
 # ---------------------------------------------------------------------------
 
 server = AgentServer()
 
-# Register the emotion detector as a second handler on the SAME server.
-# This way both "sakhi-agent" and "emotion-detector" are served by one
-# deployed agent, using a single LiveKit Cloud agent slot.
-from agents.emotion_detector import emotion_detector_entrypoint
-
-server.rtc_session(agent_name="emotion-detector")(emotion_detector_entrypoint)
+# NOTE: The "emotion-detector" rtc_session registration has been removed.
+# AgentServer enforces a single rtc_session per worker. The emotion detector
+# now runs as an asyncio background task inside sakhi_entrypoint, sharing
+# the already-connected rtc.Room object. This uses one LiveKit Cloud agent
+# slot instead of two.
 
 
 @server.rtc_session(agent_name="sakhi-agent")
@@ -235,7 +221,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     except json.JSONDecodeError:
         logger.warning("Could not parse room metadata")
 
-    # Wait for the child participant to connect
+    # Wait for the child participant to connect before spawning the detector
     await ctx.wait_for_participant()
     logger.info(f"Participant joined. Remote participants: {list(ctx.room.remote_participants.keys())}")
 
@@ -251,6 +237,18 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
             except json.JSONDecodeError:
                 logger.warning("Could not parse participant metadata as JSON, using defaults")
             break
+
+    # Shared emotion state — written by detector task, read by SakhiAgent
+    emotion_state = EmotionState()
+
+    # Spawn emotion detector as a background task now that the room is live
+    # and the child participant is present. We hold a reference to cancel it
+    # cleanly on session end via the shutdown callback below.
+    emotion_task = asyncio.create_task(
+        run_emotion_detector(ctx.room, profile_id, emotion_state),
+        name="emotion-detector",
+    )
+    logger.info("Emotion detector background task started")
 
     # Preload initial context with child profile (short-term memory)
     initial_ctx = ChatContext()
@@ -314,22 +312,9 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         else:
             logger.debug(f'🎤 child (partial): "{ev.transcript}"')
 
-    # @session.on("conversation_item_added")
-    # def _on_conversation_item(ev: ConversationItemAddedEvent) -> None:
-    #     if not isinstance(ev.item, llm.ChatMessage):
-    #         return
-    #     role = ev.item.role
-    #     text = ev.item.text_content or "(no text)"
-    #     if role == "assistant":
-    #         logger.info(f'🤖 SAKHI SAID: "{text[:200]}"')
-    #     elif role == "user":
-    #         logger.info(f'💬 USER TURN COMMITTED: "{text[:200]}"')
-    #     else:
-    #         logger.debug(f'📝 {role}: "{text[:100]}"')
-
     # ─────────────────────────────────────────────────────────────────
 
-    # Create personalized agent with initial context
+    # Create personalized agent with shared emotion state
     agent = SakhiAgent(
         child_name=child_name,
         child_age=child_age,
@@ -339,6 +324,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         mode=mode,
         topic_context=topic_context,
         surprise_fact=surprise_fact,
+        emotion_state=emotion_state,
     )
 
     # Start the session
@@ -374,14 +360,22 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     await session.generate_reply(instructions=greeting_instructions)
     logger.info(f"Initial greeting sent (mode={mode})")
 
-    # ── Wait for session end and summarize ────────────────────────────
-    # The session runs until the room closes or the child disconnects.
-    # We use ctx.shutdown_event to wait for that, then summarize.
+    # ── Wait for session end and clean up ─────────────────────────────
 
     async def _on_session_end():
-        """Extract transcript from ChatContext and trigger summarization."""
+        """Cancel the emotion detector task, then summarize the session."""
         session_ended_at = datetime.now(UTC)
-        logger.info("━━━ Session ending — starting summarization ━━━")
+        logger.info("━━━ Session ending — cleaning up ━━━")
+
+        # Cancel the emotion detector background task gracefully
+        if not emotion_task.done():
+            emotion_task.cancel()
+            try:
+                await emotion_task
+            except asyncio.CancelledError:
+                logger.info("Emotion detector task cancelled cleanly")
+            except Exception as e:
+                logger.warning(f"Emotion detector task ended with error: {e}")
 
         if not profile_id:
             logger.warning("No profile_id — skipping session summarization")
@@ -404,7 +398,6 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
 
             logger.info(f"Extracted transcript: {len(transcript)} messages, {turn_count} turns")
 
-            # Call the session summarizer
             from services.session_summarizer import summarize_session
 
             result = await summarize_session(
@@ -421,5 +414,8 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         except Exception as e:
             logger.error(f"Session summarization failed: {e}", exc_info=True)
 
-    # Register shutdown callback
     ctx.add_shutdown_callback(_on_session_end)
+
+
+if __name__ == "__main__":
+    agents.cli.run_app(server)
