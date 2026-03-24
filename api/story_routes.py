@@ -191,6 +191,62 @@ async def generate_story(
     )
 
 
+@router.post("/public/generate", response_model=StoryGenerateResponse, status_code=200)
+async def generate_story_public(
+    req: StoryGenerateRequest,
+) -> StoryGenerateResponse:
+    """
+    Generate a complete multi-modal story without authentication.
+
+    Identical to POST /generate but requires no profile token.
+    Stories are not persisted to the database.
+    Intended for website/unauthenticated usage.
+    """
+    logger.info(
+        f"Public story generation requested: "
+        f"idea='{req.idea[:60]}' genre={req.genre} scenes={req.num_scenes}"
+    )
+
+    orchestrator = get_story_orchestrator()
+
+    try:
+        result = await orchestrator.generate_story(
+            idea=req.idea,
+            genre=req.genre,
+            num_scenes=req.num_scenes,
+            child_age=req.child_age,
+            setting=req.setting,
+            aspect_ratio=req.aspect_ratio,
+            output_format=req.output_format,
+            profile_id=None,  # no persistence
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Public story generation pipeline error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Story generation failed: {e}. "
+                "This may be a temporary issue — please try again."
+            ),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in public story generation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An unexpected error occurred during story generation.",
+        )
+
+    return StoryGenerateResponse(
+        title=result["title"],
+        scenes=[StoryScene(**scene) for scene in result["scenes"]],
+        total_scenes=result["total_scenes"],
+        images_generated=result["images_generated"],
+        audio_generated=result["audio_generated"],
+    )
+
+
 @router.get("/health", response_model=StoryHealthResponse)
 async def story_health(
     claims: dict = Depends(require_profile_token),
