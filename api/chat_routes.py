@@ -165,10 +165,13 @@ async def chat_history(req: ChatHistoryRequest, claims: dict = Depends(require_p
             return {"thread_id": req.thread_id, "messages": []}
 
         messages = []
+        # Map LangGraph types ("human"/"ai") to frontend role names ("user"/"assistant")
+        role_map = {"human": "user", "ai": "assistant"}
         for msg in state.values.get("messages", []):
+            raw_role = msg.type if hasattr(msg, "type") else "unknown"
             messages.append(
                 {
-                    "role": msg.type if hasattr(msg, "type") else "unknown",
+                    "role": role_map.get(raw_role, raw_role),
                     "content": msg.content if hasattr(msg, "content") else str(msg),
                 }
             )
