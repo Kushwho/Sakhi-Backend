@@ -67,6 +67,7 @@ app = FastAPI(title="Sakhi Backend", version="0.2.0", lifespan=lifespan)
 
 _ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 
+print(_ALLOWED_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
