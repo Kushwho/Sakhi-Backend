@@ -33,6 +33,9 @@ langsmith
 groq
 replicate
 
+# Rate limiting
+slowapi>=0.1.9
+
 # Async utilities
 aiohttp
 aiofiles
