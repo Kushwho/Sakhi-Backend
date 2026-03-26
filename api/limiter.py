@@ -15,4 +15,4 @@ def _is_whitelisted(request: Request) -> bool:
     return get_remote_address(request) in _WHITELISTED_IPS
 
 
-limiter = Limiter(key_func=get_remote_address, default_limits_exempt_when=_is_whitelisted)
+limiter = Limiter(key_func=get_remote_address)
