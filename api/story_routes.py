@@ -17,12 +17,14 @@ Authentication:
 
 import json
 import logging
+import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.dependencies import require_profile_token
+from api.limiter import limiter
 from db.pool import get_pool
 from services.story_orchestrator import get_story_orchestrator
 
@@ -192,7 +194,9 @@ async def generate_story(
 
 
 @router.post("/public/generate", response_model=StoryGenerateResponse, status_code=200)
+@limiter.limit("10/hour")
 async def generate_story_public(
+    request: Request,
     req: StoryGenerateRequest,
 ) -> StoryGenerateResponse:
     """
