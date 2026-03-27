@@ -168,6 +168,13 @@ MIGRATIONS = [
     """
     ALTER TABLE session_summaries ADD COLUMN IF NOT EXISTS mode TEXT DEFAULT 'default';
     """,
+    # ------- unique constraint: one summary row per (profile, thread) -------
+    # Required for ON CONFLICT upsert in session_summarizer so that resuming
+    # and ending an existing conversation updates the row instead of duplicating it.
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_session_summaries_profile_room
+        ON session_summaries(profile_id, room_name);
+    """,
     # ------- swys_images (Say What You See seed image catalog) -------
     """
     CREATE TABLE IF NOT EXISTS swys_images (
@@ -260,6 +267,18 @@ MIGRATIONS = [
     """
     CREATE INDEX IF NOT EXISTS idx_stories_profile
         ON stories(profile_id, created_at DESC);
+    """,
+    # ------- chat_image_usage (daily quota tracking for in-chat image gen) -------
+    """
+    CREATE TABLE IF NOT EXISTS chat_image_usage (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        profile_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_chat_image_usage_profile_day
+        ON chat_image_usage(profile_id, created_at DESC);
     """,
 ]
 
