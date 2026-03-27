@@ -4,11 +4,12 @@ Sakhi — Chat API Routes (LangGraph-powered)
 REST endpoints for the text-based chat mode.
 
 Endpoints:
-  - ``POST /api/chat/send``          — stream a single assistant reply
-  - ``POST /api/chat/history``       — retrieve message history for a thread (by thread_id)
-  - ``POST /api/chat/end``           — summarise and persist a finished session
-  - ``GET  /api/chat/sessions``      — list all past sessions for the child
-  - ``GET  /api/chat/sessions/{id}`` — read a specific past session's transcript
+  - ``POST /api/chat/send``               — stream a single assistant reply
+  - ``POST /api/chat/history``            — retrieve message history for a thread (by thread_id)
+  - ``POST /api/chat/end``               — summarise and persist a finished session
+  - ``POST /api/chat/generate-image``    — rate-limited in-chat image generation
+  - ``GET  /api/chat/sessions``          — list all past sessions for the child
+  - ``GET  /api/chat/sessions/{id}``     — read a specific past session's transcript
 
 All LLM calls go through the centralized ``SakhiLLM`` layer via a LangGraph
 ``StateGraph``.  Conversation memory is backed by a PostgreSQL checkpointer.
@@ -55,6 +56,11 @@ class ChatHistoryRequest(BaseModel):
 class EndSessionRequest(BaseModel):
     thread_id: str
     mode: str = "default"
+
+
+class GenerateChatImageRequest(BaseModel):
+    prompt: str
+    aspect_ratio: str = "1:1"  # "1:1" | "16:9" | "4:3"
 
 
 # ---------------------------------------------------------------------------
@@ -150,31 +156,51 @@ async def chat_send(req: ChatSendRequest, claims: dict = Depends(require_profile
 async def chat_history(req: ChatHistoryRequest, claims: dict = Depends(require_profile_token)):
     """Return the full message history for an existing thread.
 
-    Loads the latest LangGraph checkpoint for the given ``thread_id``
-    and returns de-serialised messages as a JSON list.
+    Reads the stored transcript from the ``session_summaries`` table
+    (keyed by ``room_name`` = ``thread_id``).  This is more reliable than
+    reading the LangGraph checkpoint, which can be lost on serverless DB
+    connection drops.
     """
     if claims.get("profile_type") != "child":
         raise HTTPException(status_code=403, detail="Only child profiles can access chat history")
 
-    graph = get_chat_graph()
-    config = {"configurable": {"thread_id": req.thread_id}}
+    import uuid as _uuid
+    from db.pool import get_pool
 
     try:
-        state = await graph.aget_state(config)
-        if state is None or not state.values:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT transcript
+                FROM session_summaries
+                WHERE room_name = $1 AND profile_id = $2
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                req.thread_id,
+                _uuid.UUID(claims["profile_id"]),
+            )
+
+        if row is None or not row["transcript"]:
             return {"thread_id": req.thread_id, "messages": []}
 
-        messages = []
-        # Map LangGraph types ("human"/"ai") to frontend role names ("user"/"assistant")
+        import json as _json
+        raw = row["transcript"]
+        transcript = _json.loads(raw) if isinstance(raw, str) else raw
+
+        # Normalise transcript format:
+        #   DB stores: [{role: "human"/"ai", text: "..."}]
+        #   Frontend expects: [{role: "user"/"assistant", content: "..."}]
         role_map = {"human": "user", "ai": "assistant"}
-        for msg in state.values.get("messages", []):
-            raw_role = msg.type if hasattr(msg, "type") else "unknown"
-            messages.append(
-                {
-                    "role": role_map.get(raw_role, raw_role),
-                    "content": msg.content if hasattr(msg, "content") else str(msg),
-                }
-            )
+        messages = [
+            {
+                "role": role_map.get(m.get("role", ""), m.get("role", "unknown")),
+                "content": m.get("text") or m.get("content", ""),
+            }
+            for m in transcript
+            if isinstance(m, dict)
+        ]
 
         return {"thread_id": req.thread_id, "messages": messages}
 
@@ -221,6 +247,59 @@ async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(requir
     except Exception as e:
         logger.error(f"Failed to end chat session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to save chat summary") from e
+
+
+# ---------------------------------------------------------------------------
+# POST /api/chat/generate-image — rate-limited in-chat image generation
+# ---------------------------------------------------------------------------
+
+
+@router.post("/generate-image")
+async def generate_chat_image(
+    req: GenerateChatImageRequest,
+    claims: dict = Depends(require_profile_token),
+):
+    """Generate one image for use inside the chat flow.
+
+    Each child profile is limited to ``CHAT_IMAGE_DAILY_LIMIT`` images per UTC
+    calendar day (default: 3).  When the quota is exhausted this endpoint
+    returns HTTP 429.  If image generation itself fails, HTTP 502 is returned.
+
+    Request body:
+        prompt (str): Description of the image to generate.
+        aspect_ratio (str): "1:1" (default), "16:9", or "4:3".
+
+    Returns:
+        {"image_url": str, "remaining_today": int}
+    """
+    if claims.get("profile_type") != "child":
+        raise HTTPException(
+            status_code=403, detail="Only child profiles can generate images"
+        )
+
+    from services.chat_image_service import QuotaExceededError
+    from services.chat_image_service import generate_chat_image as _generate
+
+    try:
+        result = await _generate(
+            profile_id=claims["profile_id"],
+            prompt=req.prompt,
+            aspect_ratio=req.aspect_ratio,
+        )
+        return result
+
+    except QuotaExceededError:
+        raise HTTPException(
+            status_code=429,
+            detail="Daily image limit reached. Try again tomorrow!",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Chat image generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=502, detail="Image generation failed. Please try again."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -133,6 +133,14 @@ async def summarize_session(
                 (profile_id, room_name, started_at, ended_at, duration_secs,
                  mood_summary, topics, turn_count, transcript, mode)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (profile_id, room_name) DO UPDATE SET
+                ended_at      = EXCLUDED.ended_at,
+                duration_secs = EXCLUDED.duration_secs,
+                mood_summary  = EXCLUDED.mood_summary,
+                topics        = EXCLUDED.topics,
+                turn_count    = EXCLUDED.turn_count,
+                transcript    = EXCLUDED.transcript,
+                mode          = EXCLUDED.mode
             RETURNING id
             """,
             uuid.UUID(profile_id),

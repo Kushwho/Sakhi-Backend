@@ -22,6 +22,7 @@ from livekit.agents import (
     RunContext,
     function_tool,
     get_job_context,
+    inference
 )
 from livekit.agents.voice.events import (
     UserInputTranscribedEvent,
@@ -68,6 +69,7 @@ class SakhiAgent(Agent):
         topic_context: dict | None = None,
         surprise_fact: str | None = None,
         emotion_state: EmotionState | None = None,
+        room: rtc.Room | None = None,
     ) -> None:
         instructions = build_system_prompt(
             child_name=child_name,
@@ -82,6 +84,7 @@ class SakhiAgent(Agent):
         self.child_age = child_age
         self.child_language = child_language
         self._profile_id = profile_id
+        self._room = room
         # Shared state written by the emotion detector background task.
         # Replaces the old participant-attribute roundtrip.
         self._emotion_state: EmotionState = emotion_state or EmotionState()
@@ -175,6 +178,88 @@ class SakhiAgent(Agent):
             f"Think about it this way — can you tell me what you already know about {concept}? "
             f"That way we can build on what you know!"
         )
+
+    # -- Tool 2: Generate an image -------------------------------------------
+
+    @function_tool()
+    async def generate_image(
+        self,
+        context: RunContext,
+        description: str,
+    ) -> str:
+        """Draw a picture for the child and show it on their screen.
+
+        Use this when the child asks you to draw, create, paint, or show
+        a picture of something (e.g. "draw me a rocket", "show me a dinosaur",
+        "can you make a picture of the sun?").
+
+        Args:
+            description: What to draw, in the child's own words.
+        """
+        logger.info(f"generate_image called: description='{description[:60]}'")
+
+        if not self._profile_id:
+            return "Sorry, I can't draw pictures right now — I don't know who I'm talking to!"
+
+        from services.chat_image_service import (
+            QuotaExceededError,
+            generate_chat_image,
+        )
+
+        try:
+            result = await generate_chat_image(
+                profile_id=self._profile_id,
+                prompt=description,
+                aspect_ratio="1:1",
+            )
+            image_url = result["image_url"]
+            remaining = result["remaining_today"]
+
+            # Push the image URL to the child's frontend over LiveKit RPC
+            # so it appears on-screen while Sakhi speaks about it.
+            try:
+                if self._room:
+                    participants = list(self._room.remote_participants.values())
+                    if participants:
+                        child_identity = participants[0].identity
+                        await self._room.local_participant.perform_rpc(
+                            destination_identity=child_identity,
+                            method="showImage",
+                            payload=json.dumps(
+                                {"image_url": image_url, "caption": description}
+                            ),
+                        )
+                        logger.info(f"showImage RPC sent to {child_identity}")
+                else:
+                    logger.warning("No room attached to agent, cannot send showImage RPC")
+            except Exception as rpc_err:
+                # RPC failure is non-fatal — Sakhi still describes the image verbally
+                logger.warning(f"showImage RPC failed (non-fatal): {rpc_err}")
+
+            remaining_msg = (
+                f" We have {remaining} drawing{'s' if remaining != 1 else ''} left today."
+                if remaining <= 1
+                else ""
+            )
+            return (
+                f"I drew {description} for you! Take a look at the picture on your screen. 🎨"
+                + remaining_msg
+            )
+
+        except QuotaExceededError:
+            logger.info(f"Voice image quota exhausted for profile {self._profile_id}")
+            return (
+                "We've used all our drawing requests for today — "
+                "let's try again tomorrow! In the meantime, I can describe what "
+                f"{description} looks like in words — want me to do that?"
+            )
+
+        except Exception as e:
+            logger.error(f"generate_image tool error: {e}", exc_info=True)
+            return (
+                "Hmm, I couldn't draw that right now — something went wrong on my end. "
+                "Want to try describing something else?"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +376,12 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     # Build the voice pipeline
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=groq.LLM(model="llama-3.1-8b-instant"),
-        tts=deepgram.TTS(model="aura-2-asteria-en"),
+        llm=groq.LLM(model="llama-3.3-70b-versatile"),
+        tts=inference.TTS(
+        model="inworld/inworld-tts-1", 
+        voice="Anjali", 
+        language="en"
+        ),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
@@ -325,6 +414,7 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         topic_context=topic_context,
         surprise_fact=surprise_fact,
         emotion_state=emotion_state,
+        room=ctx.room,
     )
 
     # Start the session
