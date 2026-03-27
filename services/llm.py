@@ -49,6 +49,7 @@ class SakhiLLM:
         system_prompt: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 500,
+        model: str | None = None,
     ) -> Any:
         """
         Generate a JSON response from the LLM.
@@ -58,6 +59,7 @@ class SakhiLLM:
             system_prompt: Optional system instructions.
             temperature: Sampling temperature (default 0.3).
             max_tokens: Maximum tokens to generate (default 500).
+            model: Optional model override (defaults to instance model).
 
         Returns:
             The parsed JSON response as a dictionary.
@@ -72,7 +74,7 @@ class SakhiLLM:
 
         try:
             response = await self.client.chat.completions.create(
-                model=self.model,
+                model=model or self.model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -95,6 +97,7 @@ class SakhiLLM:
         system_prompt: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 1000,
+        model: str | None = None,
     ) -> str:
         """
         Generate a plain text response from the LLM.
@@ -104,6 +107,7 @@ class SakhiLLM:
             system_prompt: Optional system instructions.
             temperature: Sampling temperature (default 0.3).
             max_tokens: Maximum tokens to generate (default 1000).
+            model: Optional model override (defaults to instance model).
 
         Returns:
             The raw text response string.
@@ -118,7 +122,7 @@ class SakhiLLM:
 
         try:
             response = await self.client.chat.completions.create(
-                model=self.model,
+                model=model or self.model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,

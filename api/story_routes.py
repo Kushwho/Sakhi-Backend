@@ -67,8 +67,8 @@ class StoryGenerateRequest(BaseModel):
         le=12,
     )
     setting: str = Field(
-        default="Indian or universal",
-        description="Cultural / geographic context hint (e.g. 'Indian', 'jungle', 'space').",
+        default="universal",
+        description="Cultural / geographic context hint (e.g. 'Indian', 'British', 'jungle', 'space'). Defaults to universal/global.",
         max_length=100,
     )
     aspect_ratio: str = Field(

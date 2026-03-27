@@ -67,9 +67,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sakhi Backend", version="0.2.0", lifespan=lifespan)
 
-from api.limiter import limiter
+from api.limiter import RequestContextMiddleware, limiter
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(RequestContextMiddleware)
 
 _ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 

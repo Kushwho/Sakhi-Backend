@@ -52,7 +52,7 @@ logger = logging.getLogger("sakhi.story_orchestrator")
 # ---------------------------------------------------------------------------
 
 _FALLBACK_STORY_SYSTEM_PROMPT = """\
-You are a world-class children's story writer specialising in Indian children aged 4–12.
+You are a world-class children's story writer for a global audience of children aged 4–12.
 
 Your task is to write a vivid, imaginative, age-appropriate short story based on the user's idea.
 
@@ -61,17 +61,18 @@ STRICT RULES:
 2. The JSON must conform EXACTLY to this schema:
    {
      "title": "string — a short, catchy story title",
+     "visual_style": "string — ONE master description used for ALL scene illustrations. Must include: (a) art style e.g. 'vibrant watercolour storybook illustration, rich saturated colours, soft warm lighting'; (b) full physical description of EVERY named main character (age, skin tone, hair, clothing) so they look identical across every scene. Example: 'Vibrant watercolour storybook illustration, rich saturated colours, soft warm lighting. Main character: Leo, a cheerful 7-year-old boy with light brown skin, short curly black hair, wearing a yellow raincoat and red boots.'",
      "scenes": [
        {
          "story_text": "string — one full narrative paragraph (60–120 words). Expressive, child-friendly language.",
-         "image_prompt": "string — a HIGHLY DETAILED visual prompt for an illustration of this exact scene. Include: art style, mood, colours, characters, setting, action. Example: 'Vibrant gouache illustration of a brave 8-year-old Indian girl with braids, wearing a red kurti, standing at the edge of a misty rainforest, holding a glowing lantern, wide-eyed with wonder, lush green canopy above, fireflies in background, warm amber light, storybook style, rich saturated colours.'"
+         "image_prompt": "string — describe ONLY the scene-specific action, environment, and mood. Do NOT repeat art style or character descriptions — those come from visual_style. Example: 'Leo discovers a tiny glowing door at the base of an ancient oak tree, crouching down with wide curious eyes, autumn leaves swirling around him, golden hour light filtering through the forest canopy.'"
        }
      ]
    }
 
 3. The story must be child-safe — no violence, no inappropriate content, ever.
 4. Calibrate vocabulary and complexity to the child's age (provided by the user).
-5. Each scene's image_prompt must be self-contained and visually specific — describe it as if the artist has never read the story.
+5. Stories should reflect the cultural setting requested by the user. Default to a universal, globally relatable setting with diverse, inclusive characters.
 6. Do NOT include any text outside the JSON object.
 """
 
@@ -86,8 +87,9 @@ Requirements:
 - Exactly {num_scenes} scenes
 - Each scene should advance the story naturally
 - Age-appropriate vocabulary for a {child_age}-year-old
-- Set in a {setting} context where possible
+- Cultural/geographic setting: {setting}
 - End with a positive, uplifting conclusion
+- Characters should be diverse and relatable to a global audience unless the setting specifies otherwise
 
 Return the story as a JSON object following the schema in your instructions.
 """
@@ -96,41 +98,104 @@ Return the story as a JSON object following the schema in your instructions.
 # SSML / Emotion markup prompt — fetched from DB, hardcoded fallback
 # ---------------------------------------------------------------------------
 
+_STORY_MODEL = "openai/gpt-oss-20b"
+_SSML_MODEL = "llama-3.3-70b-versatile"
+
 _FALLBACK_SSML_SYSTEM_PROMPT = """\
-You are a voice-acting director for a children's story narration engine.
+You are a voice-acting director for a children's story TTS engine.
 
-Your job is to take a plain story paragraph and add expressive markup tags so that \
-the TTS engine reads it with emotion, pauses, and natural delivery.
+Your task: take a plain story paragraph and insert expressive markup tags so the \
+narrator sounds natural, emotional, and engaging for children aged 4–12.
 
-AVAILABLE TAGS:
-- Emotions: [happy], [sad], [angry], [surprised], [fearful], [disgusted]
-- Delivery styles: [laughing], [whispering]
-- Non-verbal sounds: [breathe], [clear_throat], [cough], [laugh], [sigh], [yawn]
-- Pauses: <break time="1s" />, <break time="500ms" />
+════════════════════════════════════════
+AVAILABLE TAGS
+════════════════════════════════════════
+Emotion (set the narrator's tone for the sentence that follows):
+  [happy]  [sad]  [angry]  [surprised]  [fearful]  [disgusted]
 
-RULES:
-1. Output ONLY the marked-up text. No explanations, no quotes, no preamble.
-2. Do NOT change any words in the original text. Only INSERT tags.
-3. Place emotion/delivery tags BEFORE the sentence or phrase they apply to.
-4. Use pauses at natural story beats — scene transitions, dramatic moments, dialogue boundaries.
-5. Do NOT over-tag. Use 2–5 tags per paragraph. Less is more.
-6. Non-verbal sounds should feel natural — a [sigh] before a sad moment, a [laugh] during a funny line.
+Delivery (change HOW the sentence is spoken):
+  [laughing]   [whispering]
 
-FEW-SHOT EXAMPLES:
+Non-verbal sounds (inserted as a beat, standalone between sentences):
+  [breathe]  [laugh]  [sigh]  [clear_throat]  [cough]  [yawn]
+
+Pauses (inserted between sentences at natural beats):
+  <break time="500ms" />   <break time="1s" />
+
+════════════════════════════════════════
+STRICT PLACEMENT RULES
+════════════════════════════════════════
+1. Emotion tags  → always at the START of a sentence, never mid-sentence.
+   ✓  [happy] She jumped up and clapped her hands.
+   ✗  She jumped up [happy] and clapped her hands.
+
+2. Delivery tags → always at the START of the sentence they modify.
+   ✓  [whispering] "Don't wake the dragon," she said.
+   ✗  "Don't wake [whispering] the dragon," she said.
+
+3. Non-verbal sounds → standalone BETWEEN sentences, never inside one.
+   ✓  He finally reached the top. [sigh] The view was beautiful.
+   ✗  He finally [sigh] reached the top.
+
+4. Pauses → standalone BETWEEN sentences, after punctuation.
+   ✓  The door creaked open. <break time="500ms" /> No one was there.
+   ✗  The door <break time="500ms" /> creaked open.
+
+5. Only ONE emotion or delivery tag per sentence. Never stack two on the same sentence.
+   ✗  [happy] [laughing] She danced around the room.
+   ✓  [laughing] She danced around the room.
+
+════════════════════════════════════════
+GENERAL RULES
+════════════════════════════════════════
+- Output ONLY the marked-up text. No preamble, no explanation, no surrounding quotes.
+- Do NOT alter, remove, or reorder any words in the original text.
+- Use 3–6 tags total per paragraph. Do not over-tag.
+- Prefer variety — do not repeat the same tag more than twice in one paragraph.
+- Use [whispering] only for actual whispered/secret dialogue.
+- Use <break time="1s" /> only at major scene pauses; use 500ms for lighter beats.
+
+════════════════════════════════════════
+EXAMPLES
+════════════════════════════════════════
+
+Input:
+Rani looked up at the tall, tall mountain. "I can do this," she whispered to herself. She took a deep breath and began to climb.
+
+Output:
+Rani looked up at the tall, tall mountain. <break time="500ms" />[whispering] "I can do this," she whispered to herself. [breathe] She took a deep breath and began to climb.
 
 ---
-Input: Rani looked up at the tall, tall mountain. "I can do this," she whispered to herself. She took a deep breath and began to climb.
-Output: Rani looked up at the tall, tall mountain. <break time="500ms" />[whispering] "I can do this," she whispered to herself. <break time="500ms" />[breathe] She took a deep breath and began to climb.
+
+Input:
+The monkey swung from tree to tree, laughing as the birds chased him. "You can't catch me!" he shouted. But then he slipped and tumbled into the river with a big splash!
+
+Output:
+[happy] The monkey swung from tree to tree, laughing as the birds chased him. [laughing] "You can't catch me!" he shouted. <break time="500ms" />[surprised] But then he slipped and tumbled into the river with a big splash!
+
 ---
-Input: The monkey swung from tree to tree, laughing as the birds chased him. "You can't catch me!" he shouted. But then he slipped and tumbled into the river with a big splash!
-Output: [happy] The monkey swung from tree to tree, [laughing] laughing as the birds chased him. "You can't catch me!" he shouted. <break time="500ms" />[surprised] But then he slipped and tumbled into the river with a big splash!
+
+Input:
+The forest was dark and quiet. Arjun could hear his own heartbeat. Somewhere far away, an owl hooted. He wanted to go home.
+
+Output:
+[fearful] The forest was dark and quiet. <break time="500ms" /> Arjun could hear his own heartbeat. <break time="1s" />Somewhere far away, an owl hooted. [sad] He wanted to go home.
+
 ---
-Input: The forest was dark and quiet. Arjun could hear his own heartbeat. Somewhere far away, an owl hooted. He wanted to go home.
-Output: The forest was dark and quiet. <break time="500ms" />[fearful] Arjun could hear his own heartbeat. <break time="1s" />Somewhere far away, an owl hooted. [sad] He wanted to go home.
+
+Input:
+"We did it!" cheered Maya, jumping up and down. The whole village came out to celebrate. There was music, dancing, and the biggest feast anyone had ever seen.
+
+Output:
+[happy] "We did it!" cheered Maya, jumping up and down. <break time="500ms" />The whole village came out to celebrate. [laughing] There was music, dancing, and the biggest feast anyone had ever seen.
+
 ---
-Input: "We did it!" cheered Maya, jumping up and down. The whole village came out to celebrate. There was music, dancing, and the biggest feast anyone had ever seen.
-Output: [happy] "We did it!" cheered Maya, jumping up and down. <break time="500ms" />The whole village came out to celebrate. [laughing] There was music, dancing, and the biggest feast anyone had ever seen.
----
+
+Input:
+The old man sat alone under the banyan tree. He had not eaten all day. A little girl walked up and offered him half her roti.
+
+Output:
+[sad] The old man sat alone under the banyan tree. [sigh] He had not eaten all day. <break time="500ms" />[surprised] A little girl walked up and offered him half her roti.
 """
 
 
@@ -146,7 +211,7 @@ MIN_NUM_SCENES = 2
 MAX_NUM_SCENES = 8
 DEFAULT_CHILD_AGE = 8
 DEFAULT_GENRE = "adventure"
-DEFAULT_SETTING = "Indian or universal"
+DEFAULT_SETTING = "universal"
 DEFAULT_ASPECT_RATIO = "16:9"
 DEFAULT_OUTPUT_FORMAT = "webp"
 
@@ -244,6 +309,7 @@ class StoryOrchestrationService:
 
         title = raw_scenes.get("title", "A New Adventure")
         scenes_data: list[dict] = raw_scenes.get("scenes", [])
+        visual_style = raw_scenes.get("visual_style", "")
 
         if not scenes_data:
             raise RuntimeError("Groq returned zero scenes — cannot build story")
@@ -259,7 +325,10 @@ class StoryOrchestrationService:
         for i, scene in enumerate(scenes_data, start=1):
             logger.info(f"Processing media for Scene {i}/{len(scenes_data)}...")
             story_text = scene.get("story_text", "")
-            image_prompt = scene.get("image_prompt", "")
+            scene_prompt = scene.get("image_prompt", "")
+            # Prepend the shared visual style so every scene image uses the
+            # same art style and character descriptions → visual consistency.
+            image_prompt = f"{visual_style} {scene_prompt}".strip() if visual_style else scene_prompt
 
             # ── Image: generate → upload immediately ──────────────────────────
             image_url = await self._generate_and_cache_image(
@@ -482,6 +551,7 @@ class StoryOrchestrationService:
                 system_prompt=_get_ssml_system_prompt(),
                 temperature=0.3,
                 max_tokens=1000,
+                model=_SSML_MODEL,
             )
             marked_up = marked_up.strip()
             if marked_up:
@@ -531,6 +601,7 @@ class StoryOrchestrationService:
                 system_prompt=_get_story_system_prompt(),
                 temperature=0.75,    # slightly higher for creative variation
                 max_tokens=4096,     # enough for 8 scenes with detailed prompts
+                model=_STORY_MODEL,
             )
         except Exception as e:
             logger.error(f"Groq LLM call failed during story generation: {e}", exc_info=True)
@@ -546,6 +617,9 @@ class StoryOrchestrationService:
                 "Groq response did not contain the expected 'scenes' array. "
                 "This may be a transient issue — please try again."
             )
+
+        if not result.get("visual_style"):
+            logger.warning("Groq response missing 'visual_style' — scene images may be inconsistent")
 
         for i, scene in enumerate(result["scenes"]):
             if "story_text" not in scene:
