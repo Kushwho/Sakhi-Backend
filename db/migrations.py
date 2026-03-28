@@ -268,6 +268,11 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_stories_profile
         ON stories(profile_id, created_at DESC);
     """,
+    # ------- stories: structured design system for visual consistency -------
+    """
+    ALTER TABLE stories ADD COLUMN IF NOT EXISTS
+        design_system JSONB DEFAULT '{}';
+    """,
     # ------- chat_image_usage (daily quota tracking for in-chat image gen) -------
     """
     CREATE TABLE IF NOT EXISTS chat_image_usage (
@@ -414,28 +419,36 @@ SEED_PROMPTS = [
     {
         "mode": "story_writer",
         "prompt_template": (
-            "You are a world-class children's story writer specialising in Indian children aged 4-12.\n\n"
+            "You are a world-class children's story writer for a global audience of children aged 4-12.\n\n"
             "Your task is to write a vivid, imaginative, age-appropriate short story based on the user's idea.\n\n"
             "STRICT RULES:\n"
             "1. Output ONLY valid JSON. No prose, no explanation, no markdown fences.\n"
             "2. The JSON must conform EXACTLY to this schema:\n"
             "   {\n"
             '     "title": "string - a short, catchy story title",\n'
+            '     "design_system": {\n'
+            '       "art_style": "string - master art style for ALL illustrations, e.g. \'soft watercolour illustration, children\'s book style, rich saturated colours, gentle brushstroke textures\'",\n'
+            '       "color_palette": ["list of 3-5 dominant colours as descriptive names or hex codes, e.g. \'warm saffron\', \'deep forest green\', \'#2A9D8F\'"],\n'
+            '       "characters": [\n'
+            "         {\n"
+            '           "name": "character name",\n'
+            '           "description": "complete physical appearance: age, skin tone, hair style and colour, clothing, any distinctive features - specific enough that an artist draws them identically in every scene"\n'
+            "         }\n"
+            "       ],\n"
+            '       "setting_style": "string - visual environment language that persists across all scenes, e.g. \'lush Indian village, ancient banyan trees, terracotta earth paths, monsoon greenery\'",\n'
+            '       "lighting": "string - lighting direction and quality, e.g. \'warm golden hour light, soft diffused shadows, slight atmospheric haze in backgrounds\'",\n'
+            '       "mood_atmosphere": "string - emotional tone of the illustrations, e.g. \'cheerful, wonder-filled, inviting, magical realism\'"\n'
+            "     },\n"
             '     "scenes": [\n'
             "       {\n"
             '         "story_text": "string - one full narrative paragraph (60-120 words). Expressive, child-friendly language.",\n'
-            '         "image_prompt": "string - a HIGHLY DETAILED visual prompt for an illustration of this exact scene. '
-            "Include: art style, mood, colours, characters, setting, action. "
-            "Example: 'Vibrant gouache illustration of a brave 8-year-old Indian girl with braids, wearing a red kurti, "
-            "standing at the edge of a misty rainforest, holding a glowing lantern, wide-eyed with wonder, lush green "
-            "canopy above, fireflies in background, warm amber light, storybook style, rich saturated colours.'\"\n"
+            '         "image_prompt": "string - describe ONLY the scene-specific action, foreground detail, and any environment change. Do NOT repeat art style, colour palette, lighting, or character descriptions - those are already in design_system. Example: \'Priya discovers a tiny glowing door at the base of an ancient banyan tree, crouching down with wide curious eyes, autumn leaves swirling around her feet.\'"\n'
             "       }\n"
             "     ]\n"
             "   }\n\n"
             "3. The story must be child-safe - no violence, no inappropriate content, ever.\n"
             "4. Calibrate vocabulary and complexity to the child's age (provided by the user).\n"
-            "5. Each scene's image_prompt must be self-contained and visually specific - "
-            "describe it as if the artist has never read the story.\n"
+            "5. Stories should reflect the cultural setting requested by the user. Default to a universal, globally relatable setting with diverse, inclusive characters.\n"
             "6. Do NOT include any text outside the JSON object."
         ),
     },
@@ -507,3 +520,23 @@ async def run_migrations(pool: asyncpg.Pool) -> None:
                 seed["prompt_template"],
             )
         logger.info(f"System prompts seeded ({len(SEED_PROMPTS)} entries)")
+
+        # Migrate story_writer prompt to design_system schema.
+        # Only updates the row if it still contains the old 'visual_style' schema.
+        # Idempotent: after first run the prompt contains 'design_system' so the
+        # WHERE clause never matches again.
+        story_writer_seed = next(
+            (s for s in SEED_PROMPTS if s["mode"] == "story_writer"), None
+        )
+        if story_writer_seed:
+            updated = await conn.execute(
+                """
+                UPDATE system_prompts
+                SET prompt_template = $1
+                WHERE mode = 'story_writer'
+                  AND prompt_template NOT LIKE '%design_system%'
+                """,
+                story_writer_seed["prompt_template"],
+            )
+            if updated != "UPDATE 0":
+                logger.info("Migrated story_writer prompt to design_system schema")

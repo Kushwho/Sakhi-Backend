@@ -112,6 +112,10 @@ class StoryGenerateResponse(BaseModel):
     audio_generated: int = Field(
         description="Number of scenes that have a successfully generated audio URL."
     )
+    design_system: dict = Field(
+        default_factory=dict,
+        description="Structured visual design system used to keep all scene illustrations consistent.",
+    )
 
 
 class StoryHealthResponse(BaseModel):
@@ -190,6 +194,7 @@ async def generate_story(
         total_scenes=result["total_scenes"],
         images_generated=result["images_generated"],
         audio_generated=result["audio_generated"],
+        design_system=result.get("design_system", {}),
     )
 
 
@@ -248,6 +253,7 @@ async def generate_story_public(
         total_scenes=result["total_scenes"],
         images_generated=result["images_generated"],
         audio_generated=result["audio_generated"],
+        design_system=result.get("design_system", {}),
     )
 
 
@@ -351,7 +357,7 @@ async def get_story(
         row = await conn.fetchrow(
             """
             SELECT id, title, genre, idea, total_segments,
-                   scenes_payload, created_at
+                   scenes_payload, design_system, created_at
             FROM stories
             WHERE id = $1 AND profile_id = $2
             """,
@@ -366,6 +372,13 @@ async def get_story(
     if isinstance(scenes_raw, str):
         scenes_raw = json.loads(scenes_raw)
 
+    try:
+        design_system_raw = row["design_system"]
+        if isinstance(design_system_raw, str):
+            design_system_raw = json.loads(design_system_raw)
+    except KeyError:
+        design_system_raw = {}
+
     return {
         "story_id": str(row["id"]),
         "title": row["title"],
@@ -373,6 +386,7 @@ async def get_story(
         "idea": row["idea"],
         "total_scenes": row["total_segments"],
         "scenes": scenes_raw or [],
+        "design_system": design_system_raw or {},
         "images_generated": sum(1 for s in (scenes_raw or []) if s.get("image_url")),
         "audio_generated": sum(1 for s in (scenes_raw or []) if s.get("audio_url")),
         "created_at": row["created_at"].isoformat(),
