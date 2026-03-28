@@ -61,11 +61,23 @@ STRICT RULES:
 2. The JSON must conform EXACTLY to this schema:
    {
      "title": "string — a short, catchy story title",
-     "visual_style": "string — ONE master description used for ALL scene illustrations. Must include: (a) art style e.g. 'vibrant watercolour storybook illustration, rich saturated colours, soft warm lighting'; (b) full physical description of EVERY named main character (age, skin tone, hair, clothing) so they look identical across every scene. Example: 'Vibrant watercolour storybook illustration, rich saturated colours, soft warm lighting. Main character: Leo, a cheerful 7-year-old boy with light brown skin, short curly black hair, wearing a yellow raincoat and red boots.'",
+     "design_system": {
+       "art_style": "string — master art style for ALL illustrations, e.g. 'soft watercolour illustration, children's book style, rich saturated colours, gentle brushstroke textures'",
+       "color_palette": ["list of 3-5 dominant colours as descriptive names or hex codes, e.g. 'warm saffron', 'deep forest green', '#2A9D8F'"],
+       "characters": [
+         {
+           "name": "character name",
+           "description": "complete physical appearance: age, skin tone, hair style and colour, clothing, any distinctive features — specific enough that an artist draws them identically in every scene"
+         }
+       ],
+       "setting_style": "string — visual environment language that persists across all scenes, e.g. 'lush Indian village, ancient banyan trees, terracotta earth paths, monsoon greenery'",
+       "lighting": "string — lighting direction and quality, e.g. 'warm golden hour light, soft diffused shadows, slight atmospheric haze in backgrounds'",
+       "mood_atmosphere": "string — emotional tone of the illustrations, e.g. 'cheerful, wonder-filled, inviting, magical realism'"
+     },
      "scenes": [
        {
-         "story_text": "string — one full narrative paragraph (60–120 words). Expressive, child-friendly language.",
-         "image_prompt": "string — describe ONLY the scene-specific action, environment, and mood. Do NOT repeat art style or character descriptions — those come from visual_style. Example: 'Leo discovers a tiny glowing door at the base of an ancient oak tree, crouching down with wide curious eyes, autumn leaves swirling around him, golden hour light filtering through the forest canopy.'"
+         "story_text": "string — one full narrative paragraph (60-120 words). Expressive, child-friendly language.",
+         "image_prompt": "string — describe ONLY the scene-specific action, foreground detail, and any environment change. Do NOT repeat art style, colour palette, lighting, or character descriptions — those are already in design_system. Example: 'Priya discovers a tiny glowing door at the base of an ancient banyan tree, crouching down with wide curious eyes, autumn leaves swirling around her feet.'"
        }
      ]
    }
@@ -79,6 +91,59 @@ STRICT RULES:
 
 def _get_story_system_prompt() -> str:
     return get_prompt_template("story_writer") or _FALLBACK_STORY_SYSTEM_PROMPT
+
+
+def _format_design_system_prompt(design_system: dict) -> str:
+    """Serialize the structured design_system dict into a deterministic Flux prompt prefix.
+
+    Fields are emitted in a fixed order so the same JSON always produces
+    the same string. This prefix is prepended to every scene's image_prompt,
+    ensuring visual consistency across all scenes in a story.
+
+    Returns an empty string if design_system is empty or None.
+    """
+    if not design_system or not isinstance(design_system, dict):
+        return ""
+
+    parts: list[str] = []
+
+    # Art style first — highest influence on Flux's visual embedding
+    art_style = design_system.get("art_style", "").strip()
+    if art_style:
+        parts.append(art_style)
+
+    color_palette = design_system.get("color_palette", [])
+    if color_palette:
+        palette_str = (
+            ", ".join(str(c) for c in color_palette)
+            if isinstance(color_palette, list)
+            else str(color_palette)
+        )
+        parts.append(f"colour palette: {palette_str}")
+
+    lighting = design_system.get("lighting", "").strip()
+    if lighting:
+        parts.append(f"lighting: {lighting}")
+
+    mood = design_system.get("mood_atmosphere", "").strip()
+    if mood:
+        parts.append(f"mood: {mood}")
+
+    setting = design_system.get("setting_style", "").strip()
+    if setting:
+        parts.append(f"setting style: {setting}")
+
+    # Characters last so they bridge naturally into scene-specific action
+    for char in design_system.get("characters", []):
+        name = char.get("name", "").strip()
+        desc = char.get("description", "").strip()
+        if name and desc:
+            parts.append(f"character {name}: {desc}")
+        elif desc:
+            parts.append(desc)
+
+    return ", ".join(parts)
+
 
 _STORY_USER_PROMPT_TEMPLATE = """\
 Write a {genre} story for a {child_age}-year-old child about: "{idea}"
@@ -309,10 +374,29 @@ class StoryOrchestrationService:
 
         title = raw_scenes.get("title", "A New Adventure")
         scenes_data: list[dict] = raw_scenes.get("scenes", [])
-        visual_style = raw_scenes.get("visual_style", "")
+        design_system_raw = raw_scenes.get("design_system")
+        design_system: dict = design_system_raw if isinstance(design_system_raw, dict) else {}
 
         if not scenes_data:
             raise RuntimeError("Groq returned zero scenes — cannot build story")
+
+        # Build the deterministic prompt prefix from the structured design system.
+        # Falls back to legacy visual_style if design_system is absent (handles
+        # the transitional window where the DB still serves the old prompt).
+        if design_system:
+            visual_prefix = _format_design_system_prompt(design_system)
+        else:
+            if design_system_raw is not None and not isinstance(design_system_raw, dict):
+                logger.warning(
+                    f"Groq returned unexpected type for 'design_system': {type(design_system_raw).__name__} — "
+                    "falling back to visual_style"
+                )
+            visual_prefix = raw_scenes.get("visual_style", "")
+            if not visual_prefix:
+                logger.warning(
+                    "Groq response missing both 'design_system' and 'visual_style' — "
+                    "scene images may be visually inconsistent"
+                )
 
         logger.info(f"Story structure ready: '{title}' — {len(scenes_data)} scenes")
 
@@ -326,9 +410,9 @@ class StoryOrchestrationService:
             logger.info(f"Processing media for Scene {i}/{len(scenes_data)}...")
             story_text = scene.get("story_text", "")
             scene_prompt = scene.get("image_prompt", "")
-            # Prepend the shared visual style so every scene image uses the
-            # same art style and character descriptions → visual consistency.
-            image_prompt = f"{visual_style} {scene_prompt}".strip() if visual_style else scene_prompt
+            # Prepend the shared design system prefix so every scene image uses
+            # identical art style, colours, lighting, and character descriptions.
+            image_prompt = f"{visual_prefix} {scene_prompt}".strip() if visual_prefix else scene_prompt
 
             # ── Image: generate → upload immediately ──────────────────────────
             image_url = await self._generate_and_cache_image(
@@ -350,7 +434,7 @@ class StoryOrchestrationService:
             assembled_scenes.append({
                 "scene_number": i,
                 "story_text": story_text,
-                "image_prompt": image_prompt,
+                "image_prompt": scene_prompt,  # original scene-specific prompt; design_system stored separately
                 "image_url": image_url,
                 "audio_url": audio_url,
             })
@@ -370,13 +454,20 @@ class StoryOrchestrationService:
             "total_scenes": len(assembled_scenes),
             "images_generated": images_generated,
             "audio_generated": audio_generated,
+            "design_system": design_system,
         }
 
         # Persist the story to the DB so a child can view it later.
         # Run as a background task so it never delays the response.
         if profile_id:
             asyncio.create_task(
-                self._save_story(profile_id=profile_id, idea=idea, genre=genre, result=result),
+                self._save_story(
+                    profile_id=profile_id,
+                    idea=idea,
+                    genre=genre,
+                    result=result,
+                    design_system=design_system,
+                ),
                 name=f"save-story-{profile_id[:8]}",
             )
 
@@ -392,6 +483,7 @@ class StoryOrchestrationService:
         idea: str,
         genre: str,
         result: dict,
+        design_system: dict | None = None,
     ) -> str | None:
         """Persist a generated story to the ``stories`` table.
 
@@ -404,8 +496,8 @@ class StoryOrchestrationService:
                     """
                     INSERT INTO stories
                         (profile_id, title, genre, idea,
-                         total_segments, scenes_payload)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                         total_segments, scenes_payload, design_system)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     RETURNING id
                     """,
                     uuid.UUID(profile_id),
@@ -414,6 +506,7 @@ class StoryOrchestrationService:
                     idea,
                     result["total_scenes"],
                     json.dumps(result["scenes"]),
+                    json.dumps(design_system or {}),
                 )
             story_id = str(row["id"])
             logger.info(f"Story persisted: {story_id} — '{result['title']}'")
@@ -618,8 +711,11 @@ class StoryOrchestrationService:
                 "This may be a transient issue — please try again."
             )
 
-        if not result.get("visual_style"):
-            logger.warning("Groq response missing 'visual_style' — scene images may be inconsistent")
+        if not result.get("design_system") and not result.get("visual_style"):
+            logger.warning(
+                "Groq response missing 'design_system' (and no legacy 'visual_style') — "
+                "scene images may be visually inconsistent"
+            )
 
         for i, scene in enumerate(result["scenes"]):
             if "story_text" not in scene:
