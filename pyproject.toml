@@ -133,6 +133,7 @@ dependencies = [
     "psutil==7.1.0",
     "psycopg==3.3.3",
     "psycopg-binary==3.3.3",
+    "python-jose[cryptography]==3.3.0",
     "psycopg-pool==3.3.0",
     "pure-eval==0.2.3",
     "pycparser==3.0",
@@ -194,6 +195,7 @@ dependencies = [
     "zipp==3.23.0",
     "zstandard==0.25.0",
     "sentence-transformers>=5.3.0",
+    "slowapi>=0.1.9",
 ]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

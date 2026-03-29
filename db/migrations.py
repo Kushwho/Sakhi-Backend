@@ -19,6 +19,9 @@ MIGRATIONS = [
         password_hash TEXT NOT NULL,
         family_name TEXT NOT NULL,
         plan        TEXT NOT NULL DEFAULT 'free',
+        google_id   TEXT UNIQUE,
+        auth_provider TEXT DEFAULT 'email' CHECK (auth_provider IN ('email', 'google')),
+        email_verified BOOLEAN DEFAULT false,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     """,
@@ -284,6 +287,21 @@ MIGRATIONS = [
     """
     CREATE INDEX IF NOT EXISTS idx_chat_image_usage_profile_day
         ON chat_image_usage(profile_id, created_at DESC);
+    """,
+    # ------- Google OAuth columns (for existing databases) -------
+    """
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
+    """,
+    """
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS
+        auth_provider TEXT DEFAULT 'email' CHECK (auth_provider IN ('email', 'google'));
+    """,
+    """
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_accounts_google_id
+        ON accounts(google_id) WHERE google_id IS NOT NULL;
     """,
 ]
 

@@ -203,6 +203,114 @@ async def logout(account_id: str) -> None:
     logger.info(f"All sessions revoked for account {account_id}")
 
 
+async def google_auth(google_id_token: str, family_name: str, password: str) -> dict:
+    """Authenticate via Google OAuth and create/return family account.
+
+    Important: Google and email accounts are SEPARATE even if email matches.
+    We only look up accounts by google_id, not by email.
+
+    Returns: {account, profiles, account_token, refresh_token}
+    """
+    # Import here to avoid circular dependency
+    from services.google_oauth import verify_google_token
+
+    pool = get_pool()
+    password_hash = _hash_password(password)
+
+    # Verify Google ID token
+    google_user = await verify_google_token(google_id_token)
+    google_id = google_user["google_id"]
+    email = google_user["email"]
+
+    async with pool.acquire() as conn:
+        # Check if account exists by google_id (NOT by email - separate accounts)
+        existing_account = await conn.fetchrow(
+            "SELECT * FROM accounts WHERE google_id = $1", google_id
+        )
+
+        if existing_account:
+            # Existing Google user - return their account and profiles
+            account = existing_account
+            account_id = str(account["id"])
+
+            # Fetch all profiles for picker screen
+            profiles = await conn.fetch(
+                "SELECT id, account_id, type, display_name, avatar, age, created_at FROM profiles WHERE account_id = $1 ORDER BY type DESC, created_at",
+                account["id"],
+            )
+
+            logger.info(f"Google login: {email} (id={account_id})")
+
+        else:
+            # New Google user - create account
+            # Check if email is used by a different (email) account
+            email_exists = await conn.fetchval(
+                "SELECT id FROM accounts WHERE email = $1 AND google_id IS NULL", email
+            )
+            if email_exists:
+                # Email is already used by email account, but Google accounts are separate
+                # This is expected behavior - user will have two separate accounts
+                logger.info(f"Email {email} exists as email account, creating separate Google account")
+
+            # Create account with Google ID and password
+            account = await conn.fetchrow(
+                """
+                INSERT INTO accounts (email, password_hash, family_name, google_id, auth_provider, email_verified)
+                VALUES ($1, $2, $3, $4, 'google', true)
+                RETURNING id, email, family_name, plan, google_id, auth_provider, created_at
+                """,
+                email,
+                password_hash,
+                family_name,
+                google_id,
+            )
+            account_id = str(account["id"])
+
+            # Auto-create parent profile
+            parent_profile = await conn.fetchrow(
+                """
+                INSERT INTO profiles (account_id, type, display_name)
+                VALUES ($1, 'parent', $2)
+                RETURNING id, account_id, type, display_name, avatar, age, created_at
+                """,
+                account["id"],
+                family_name,
+            )
+
+            profiles = [_record_to_dict(parent_profile)]
+            logger.info(f"Google account created: {email} (id={account_id})")
+
+        # Create tokens (for both new and existing users)
+        account_token, account_jti, account_exp = create_account_token(account_id)
+        refresh_token, refresh_jti, refresh_exp = create_refresh_token(account_id)
+
+        # Record sessions
+        await conn.execute(
+            """
+            INSERT INTO sessions (account_id, token_type, token_jti, expires_at)
+            VALUES ($1, 'account', $2, $3), ($1, 'refresh', $4, $5)
+            """,
+            account["id"],
+            account_jti,
+            account_exp,
+            refresh_jti,
+            refresh_exp,
+        )
+
+    return {
+        "account": {
+            "id": account_id,
+            "email": account["email"],
+            "family_name": account["family_name"],
+            "plan": account["plan"],
+            "auth_provider": account.get("auth_provider", "google"),
+        },
+        "profiles": [_record_to_dict(p) for p in profiles],
+        "account_token": account_token,
+        "refresh_token": refresh_token,
+    }
+
+
 def _record_to_dict(record) -> dict:
     """Convert an asyncpg Record to a JSON-safe dict."""
     d = dict(record)
