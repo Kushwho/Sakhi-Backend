@@ -37,6 +37,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+    family_name: str
+    password: str
+
+
 class CreateChildRequest(BaseModel):
     display_name: str
     age: int | None = None
@@ -72,6 +78,35 @@ async def login(req: LoginRequest):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
+        ) from None
+
+    return result
+
+
+@router.post("/google")
+async def google_auth(req: GoogleAuthRequest):
+    """Exchange Google ID token for Sakhi JWT tokens.
+
+    Creates or authenticates a Google account.
+    Google and email accounts are separate even if email matches.
+    """
+    try:
+        result = await accounts.google_auth(req.id_token, req.family_name, req.password)
+    except ValueError as e:
+        error_msg = str(e)
+        if "token" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=error_msg,
+            ) from None
+        if "exists" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_msg,
+            ) from None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_msg,
         ) from None
 
     return result
