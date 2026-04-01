@@ -14,7 +14,9 @@ from api.dependencies import (
     require_profile_token,
     require_refresh_token,
 )
+from db.pool import get_pool
 from services import accounts, profiles
+from services import msg91 as msg91_service
 
 logger = logging.getLogger("sakhi.api.auth")
 
@@ -26,21 +28,40 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # ---------------------------------------------------------------------------
 
 
-class SignupRequest(BaseModel):
-    email: EmailStr
-    password: str
-    family_name: str
-
-
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class SendOtpRequest(BaseModel):
+    email: EmailStr
+
+
+class VerifyOtpAndSignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+    family_name: str
+    otp: str
+
+
+class ResendOtpRequest(BaseModel):
+    email: EmailStr
 
 
 class GoogleAuthRequest(BaseModel):
     id_token: str
     family_name: str
     password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
 
 
 class CreateChildRequest(BaseModel):
@@ -58,15 +79,98 @@ class EnterProfileRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
-async def signup(req: SignupRequest):
-    """Create a new family account with auto-created parent profile."""
+@router.post("/send-otp")
+async def send_otp(req: SendOtpRequest):
+    """Send a 6-digit OTP to the given email via MSG91.
+
+    Checks if the email is already registered before sending.
+    Returns { request_id, message } for the frontend to track verification.
+    """
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        existing = await conn.fetchval("SELECT id FROM accounts WHERE email = $1", req.email)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists",
+            ) from None
+
     try:
-        result = await accounts.signup(req.email, req.password, req.family_name)
+        await msg91_service.send_otp(req.email)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
+
+    return {"message": "OTP sent to your email"}
+
+
+@router.post("/verify-otp-signup", status_code=status.HTTP_201_CREATED)
+async def verify_otp_and_signup(req: VerifyOtpAndSignupRequest):
+    """Verify OTP and create a new family account in one step.
+
+    If the OTP is valid, creates the account with email_verified=True
+    and returns tokens + parent profile.
+    """
+    try:
+        await msg91_service.verify_otp(req.email, req.otp)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    try:
+        result = await accounts.signup(req.email, req.password, req.family_name, email_verified=True)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
 
     return result
+
+
+@router.post("/resend-otp")
+async def resend_otp(req: ResendOtpRequest):
+    """Resend OTP to the given email. Returns a new request_id."""
+    try:
+        await msg91_service.send_otp(req.email)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
+
+    return {"message": "OTP resent to your email"}
+
+
+@router.post("/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    """Send an OTP to the user's email for password reset."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        account = await conn.fetchrow("SELECT id, auth_provider FROM accounts WHERE email = $1", req.email)
+        if not account:
+            # Don't reveal whether the email exists — return success either way
+            return {"message": "If an account with this email exists, an OTP has been sent"}
+        if account["auth_provider"] == "google":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This account uses Google sign-in. Password reset is not applicable.",
+            )
+
+    try:
+        await msg91_service.send_otp(req.email)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
+
+    return {"message": "If an account with this email exists, an OTP has been sent"}
+
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    """Verify OTP and reset the account password."""
+    try:
+        await msg91_service.verify_otp(req.email, req.otp)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    try:
+        await accounts.reset_password(req.email, req.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    return {"message": "Password has been reset successfully"}
 
 
 @router.post("/login")
