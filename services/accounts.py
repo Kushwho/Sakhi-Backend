@@ -27,7 +27,7 @@ def _verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
-async def signup(email: str, password: str, family_name: str) -> dict:
+async def signup(email: str, password: str, family_name: str, email_verified: bool = True) -> dict:
     """Create a new family account with an auto-created parent profile.
 
     Returns: {account, parent_profile, account_token, refresh_token}
@@ -44,13 +44,14 @@ async def signup(email: str, password: str, family_name: str) -> dict:
         # Create the account
         account = await conn.fetchrow(
             """
-            INSERT INTO accounts (email, password_hash, family_name)
-            VALUES ($1, $2, $3)
+            INSERT INTO accounts (email, password_hash, family_name, email_verified)
+            VALUES ($1, $2, $3, $4)
             RETURNING id, email, family_name, plan, created_at
             """,
             email,
             password_hash,
             family_name,
+            email_verified,
         )
         account_id = str(account["id"])
 
@@ -309,6 +310,37 @@ async def google_auth(google_id_token: str, family_name: str, password: str) -> 
         "account_token": account_token,
         "refresh_token": refresh_token,
     }
+
+
+async def reset_password(email: str, new_password: str) -> None:
+    """Reset password for an email-auth account.
+
+    Raises ValueError if account not found or is a Google-only account.
+    """
+    pool = get_pool()
+    password_hash = _hash_password(new_password)
+
+    async with pool.acquire() as conn:
+        account = await conn.fetchrow(
+            "SELECT id, auth_provider FROM accounts WHERE email = $1", email
+        )
+        if not account:
+            raise ValueError("No account found with this email")
+        if account["auth_provider"] == "google":
+            raise ValueError("This account uses Google sign-in. Password reset is not applicable.")
+
+        await conn.execute(
+            "UPDATE accounts SET password_hash = $1 WHERE id = $2",
+            password_hash,
+            account["id"],
+        )
+        # Revoke all sessions so user must log in with new password
+        await conn.execute(
+            "UPDATE sessions SET revoked = true WHERE account_id = $1 AND revoked = false",
+            account["id"],
+        )
+
+    logger.info(f"Password reset for account {account['id']}")
 
 
 def _record_to_dict(record) -> dict:
