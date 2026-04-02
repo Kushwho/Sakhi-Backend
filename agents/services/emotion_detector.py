@@ -29,6 +29,7 @@ What changed vs the old entrypoint
   cleans up when the task is cancelled on session end.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -140,98 +141,120 @@ async def run_emotion_detector(
     logger.info("Hume client connected — ready to analyze audio")
 
     try:
-        # Find the child's audio track among already-joined remote participants.
-        # The task is spawned after ctx.wait_for_participant(), so the child
-        # is guaranteed to be present, but their track may not be published yet.
-        # We iterate current participants; a production improvement would also
-        # hook room.on("track_subscribed") for participants who join later.
+        # ── Step 1: Find an existing audio track (fast path) ────────────
+        audio_track = None
         for participant in room.remote_participants.values():
             for pub in participant.track_publications.values():
                 if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
-                    audio_stream = rtc.AudioStream(pub.track)
-                    buffer = bytearray()
+                    audio_track = pub.track
+                    break
+            if audio_track:
+                break
 
-                    async for frame_event in audio_stream:
-                        buffer.extend(frame_event.frame.data.tobytes())
+        # ── Step 2: If no track yet, wait for one via track_subscribed ──
+        if not audio_track:
+            track_future = asyncio.get_running_loop().create_future()
 
-                        # Buffer ~3 seconds of audio (48 kHz, 16-bit mono ≈ 288 KB)
-                        if len(buffer) >= 288_000:
+            @room.on("track_subscribed")
+            def _on_track_subscribed(track, publication, participant):
+                if track.kind == rtc.TrackKind.KIND_AUDIO and not track_future.done():
+                    track_future.set_result(track)
+
+            logger.info("No audio track found yet — waiting for track_subscribed event...")
+            try:
+                audio_track = await asyncio.wait_for(track_future, timeout=60.0)
+                logger.info("Audio track received via track_subscribed event")
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for audio track — exiting emotion detector")
+                return
+            finally:
+                room.remove_listener("track_subscribed", _on_track_subscribed)
+
+        # ── Step 3: Process audio from the track ────────────────────────
+        audio_stream = rtc.AudioStream(audio_track)
+        buffer = bytearray()
+
+        async for frame_event in audio_stream:
+            buffer.extend(frame_event.frame.data.tobytes())
+
+            # Buffer ~3 seconds of audio (48 kHz, 16-bit mono ≈ 288 KB)
+            if len(buffer) >= 288_000:
+                logger.debug(
+                    f"Audio buffer full ({len(buffer)} bytes), sending to Hume..."
+                )
+                result = await client.analyze_audio(bytes(buffer))
+                buffer.clear()
+
+                if result and result["top_emotions"]:
+                    top_emotion_name = result["top_emotions"][0][0]
+                    top_emotion_score = result["top_emotions"][0][1]
+                    avatar_expr = map_emotion_to_avatar(top_emotion_name)
+
+                    logger.info(
+                        f"🎭 EMOTION DETECTED: {top_emotion_name} "
+                        f"(score={top_emotion_score:.3f}) → avatar:{avatar_expr}  "
+                        f"| top3={result['top_emotions']}"
+                    )
+
+                    # 1. Write to shared in-process state (SakhiAgent reads this)
+                    state.emotion = top_emotion_name
+                    state.avatar_expression = avatar_expr
+                    state.score = top_emotion_score
+                    logger.debug(
+                        f"EmotionState updated: emotion={top_emotion_name}"
+                    )
+
+                    # 2. Still set participant attributes for frontend RPC
+                    await room.local_participant.set_attributes(
+                        {
+                            "emotion": top_emotion_name,
+                            "avatar_expression": avatar_expr,
+                        }
+                    )
+
+                    # 3. Send to frontend via RPC (child participant only)
+                    for pid, _participant in room.remote_participants.items():
+                        if not pid.startswith("child-"):
                             logger.debug(
-                                f"Audio buffer full ({len(buffer)} bytes), sending to Hume..."
+                                f"Skipping RPC to non-child participant: {pid}"
                             )
-                            result = await client.analyze_audio(bytes(buffer))
-                            buffer.clear()
+                            continue
 
-                            if result and result["top_emotions"]:
-                                top_emotion_name = result["top_emotions"][0][0]
-                                top_emotion_score = result["top_emotions"][0][1]
-                                avatar_expr = map_emotion_to_avatar(top_emotion_name)
+                        rpc_payload = json.dumps(
+                            {
+                                "expression": avatar_expr,
+                                "raw_emotion": top_emotion_name,
+                                "score": top_emotion_score,
+                            }
+                        )
+                        try:
+                            await room.local_participant.perform_rpc(
+                                destination_identity=pid,
+                                method="setEmotionState",
+                                payload=rpc_payload,
+                                response_timeout=3.0,
+                            )
+                            logger.info(
+                                f"✅ RPC setEmotionState → {pid}: {rpc_payload}"
+                            )
+                        except Exception as rpc_err:
+                            logger.warning(
+                                f"❌ RPC setEmotionState FAILED for {pid}: {rpc_err}"
+                            )
 
-                                logger.info(
-                                    f"🎭 EMOTION DETECTED: {top_emotion_name} "
-                                    f"(score={top_emotion_score:.3f}) → avatar:{avatar_expr}  "
-                                    f"| top3={result['top_emotions']}"
-                                )
-
-                                # 1. Write to shared in-process state (SakhiAgent reads this)
-                                state.emotion = top_emotion_name
-                                state.avatar_expression = avatar_expr
-                                state.score = top_emotion_score
-                                logger.debug(
-                                    f"EmotionState updated: emotion={top_emotion_name}"
-                                )
-
-                                # 2. Still set participant attributes for frontend RPC
-                                await room.local_participant.set_attributes(
-                                    {
-                                        "emotion": top_emotion_name,
-                                        "avatar_expression": avatar_expr,
-                                    }
-                                )
-
-                                # 3. Send to frontend via RPC (child participant only)
-                                for pid, _participant in room.remote_participants.items():
-                                    if not pid.startswith("child-"):
-                                        logger.debug(
-                                            f"Skipping RPC to non-child participant: {pid}"
-                                        )
-                                        continue
-
-                                    rpc_payload = json.dumps(
-                                        {
-                                            "expression": avatar_expr,
-                                            "raw_emotion": top_emotion_name,
-                                            "score": top_emotion_score,
-                                        }
-                                    )
-                                    try:
-                                        await room.local_participant.perform_rpc(
-                                            destination_identity=pid,
-                                            method="setEmotionState",
-                                            payload=rpc_payload,
-                                            response_timeout=3.0,
-                                        )
-                                        logger.info(
-                                            f"✅ RPC setEmotionState → {pid}: {rpc_payload}"
-                                        )
-                                    except Exception as rpc_err:
-                                        logger.warning(
-                                            f"❌ RPC setEmotionState FAILED for {pid}: {rpc_err}"
-                                        )
-
-                                # 4. Persist to DB for the parent dashboard
-                                if profile_id:
-                                    await _persist_emotion(
-                                        profile_id=profile_id,
-                                        room_name=room.name,
-                                        emotion=top_emotion_name,
-                                        score=top_emotion_score,
-                                        top_3=result["top_emotions"],
-                                    )
-                            else:
-                                logger.debug(
-                                    "Hume returned no emotions for this audio chunk"
-                                )
+                    # 4. Persist to DB for the parent dashboard
+                    if profile_id:
+                        await _persist_emotion(
+                            profile_id=profile_id,
+                            room_name=room.name,
+                            emotion=top_emotion_name,
+                            score=top_emotion_score,
+                            top_3=result["top_emotions"],
+                        )
+                else:
+                    logger.debug(
+                        "Hume returned no emotions for this audio chunk"
+                    )
     finally:
         await client.close()
         if _db_pool:

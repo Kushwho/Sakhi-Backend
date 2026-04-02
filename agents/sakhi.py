@@ -346,32 +346,39 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
         ),
     )
 
-    # Recall long-term memories for this child at session start
+    # Recall long-term memories in the background so the greeting is not
+    # blocked by the Replicate embedding call (which can take 30-60s on cold
+    # start).  Memories are injected into the agent's chat_ctx asynchronously
+    # and will be available for subsequent turns; the initial greeting does not
+    # depend on them.  The closure captures the local `agent` variable which
+    # will exist by the time the task actually runs.
     if profile_id:
-        try:
-            from services.memory_manager import MemoryManager
 
-            memory_mgr = MemoryManager()
-            past_memories = await memory_mgr.recall(
-                profile_id=profile_id,
-                service="sakhi",
-                query=child_name,
-                limit=5,
-            )
-            if past_memories:
-                initial_ctx.add_message(
-                    role="system",
-                    content=(
-                        f"[Long-term memory — DO NOT read aloud] "
-                        f"From previous conversations with {child_name}, you remember: "
-                        + "; ".join(past_memories)
-                        + ". Use these naturally — don't list them, just let them "
-                        f"inform how you talk to {child_name}."
-                    ),
+        async def _load_initial_memories() -> None:
+            try:
+                from services.memory_manager import MemoryManager
+
+                memory_mgr = MemoryManager()
+                past_memories = await memory_mgr.recall(
+                    profile_id=profile_id,
+                    service="sakhi",
+                    query=child_name,
+                    limit=5,
                 )
-                logger.info(f"Injected {len(past_memories)} memories into session start context")
-        except Exception as e:
-            logger.warning(f"Memory recall at session start failed: {e}")
+                if past_memories:
+                    agent.chat_ctx.add_message(
+                        role="system",
+                        content=(
+                            f"[Long-term memory — DO NOT read aloud] "
+                            f"From previous conversations with {child_name}, you remember: "
+                            + "; ".join(past_memories)
+                            + ". Use these naturally — don't list them, just let them "
+                            f"inform how you talk to {child_name}."
+                        ),
+                    )
+                    logger.info(f"Injected {len(past_memories)} memories (background)")
+            except Exception as e:
+                logger.warning(f"Background memory recall failed: {e}")
 
     # Build the voice pipeline
     session = AgentSession(
@@ -424,30 +431,32 @@ async def sakhi_entrypoint(ctx: agents.JobContext):
     )
     logger.info("Session started — voice pipeline active")
 
+    # Fire background memory recall now that agent exists
+    if profile_id:
+        asyncio.create_task(_load_initial_memories(), name="initial-memory-recall")
+
+    # Greet the child (mode-aware)
     # Greet the child (mode-aware)
     if mode == "curious_topic" and topic_context:
-        greeting_instructions = (
-            f"Greet {child_name} warmly by name and tell them you're excited to explore "
-            f"{topic_context['title']} together! Ask what they already know about it. "
-            f"Keep it to 2-3 short sentences."
+        greeting_text = (
+            f"Hey {child_name}! I'm SO excited to explore {topic_context['title']} with you today! "
+            f"What do you already know about it?"
         )
     elif mode == "curious_surprise" and surprise_fact:
-        greeting_instructions = (
-            f"Greet {child_name} warmly by name and share this amazing fact: "
-            f'"{surprise_fact}" — then ask what they think about it! '
-            f"Keep it to 2-3 short sentences."
+        greeting_text = (
+            f"Hi {child_name}! Did you know — {surprise_fact}! "
+            f"What do you think about that?!"
         )
     elif mode == "curious_open":
-        greeting_instructions = (
-            f"Greet {child_name} warmly by name. Tell them you're ready to explore "
-            f"anything they're curious about today! Ask what they'd like to discover. "
-            f"Keep it to 1-2 short sentences."
+        greeting_text = (
+            f"Hey {child_name}! I'm ready to explore anything with you today — what are we discovering?!"
         )
     else:
-        greeting_instructions = (
-            f"Greet {child_name} warmly by name. You are excited to talk to them today! Keep it to 1-2 short sentences."
+        greeting_text = (
+            f"Hi {child_name}! So happy to chat with you today — let's have some fun!"
         )
-    await session.generate_reply(instructions=greeting_instructions)
+
+    await session.say(greeting_text)
     logger.info(f"Initial greeting sent (mode={mode})")
 
     # ── Wait for session end and clean up ─────────────────────────────
