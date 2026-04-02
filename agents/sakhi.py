@@ -88,6 +88,10 @@ class SakhiAgent(Agent):
         # Shared state written by the emotion detector background task.
         # Replaces the old participant-attribute roundtrip.
         self._emotion_state: EmotionState = emotion_state or EmotionState()
+        # Cache for background memory recall — results from the previous
+        # recall are injected instantly on the next turn so the LLM is never
+        # blocked waiting for the Replicate embedding API.
+        self._cached_memories: list[str] = []
 
         if profile_id:
             from services.memory_manager import MemoryManager
@@ -130,28 +134,43 @@ class SakhiAgent(Agent):
         else:
             logger.debug("No emotion detected yet — skipping emotion injection")
 
-        # Recall relevant long-term memories based on what the child said
+        # Inject cached memories from the PREVIOUS background recall (instant).
+        # Then fire a new recall in the background for the NEXT turn.
         if self._memory_mgr and self._profile_id and new_message.text_content:
-            try:
-                relevant = await self._memory_mgr.recall(
-                    profile_id=self._profile_id,
-                    service="sakhi",
-                    query=new_message.text_content,
-                    limit=3,
+            # 1. Inject cached memories immediately (no await, no API call)
+            if self._cached_memories:
+                turn_ctx.add_message(
+                    role="system",
+                    content=(
+                        f"[Long-term memory — DO NOT read aloud] "
+                        f"You remember these things about {self.child_name}: "
+                        + "; ".join(self._cached_memories)
+                        + ". Use this to personalize your response naturally."
+                    ),
                 )
-                if relevant:
-                    turn_ctx.add_message(
-                        role="system",
-                        content=(
-                            f"[Long-term memory — DO NOT read aloud] "
-                            f"You remember these things about {self.child_name}: "
-                            + "; ".join(relevant)
-                            + ". Use this to personalize your response naturally."
-                        ),
-                    )
-                    logger.info(f"Injected {len(relevant)} memories into turn context")
-            except Exception as e:
-                logger.warning(f"Memory recall during turn failed: {e}")
+                logger.info(f"Injected {len(self._cached_memories)} cached memories into turn context")
+                self._cached_memories = []
+
+            # 2. Fire background recall for the next turn
+            asyncio.create_task(
+                self._background_recall(new_message.text_content),
+                name="memory-recall",
+            )
+
+    async def _background_recall(self, query: str) -> None:
+        """Recall memories in the background and cache them for the next turn."""
+        try:
+            relevant = await self._memory_mgr.recall(
+                profile_id=self._profile_id,
+                service="sakhi",
+                query=query,
+                limit=3,
+            )
+            if relevant:
+                self._cached_memories = relevant
+                logger.debug(f"Background recall cached {len(relevant)} memories for next turn")
+        except Exception as e:
+            logger.warning(f"Background memory recall failed: {e}")
 
     # -- Tool 1: Explain a concept (RAG stub) --------------------------------
 
