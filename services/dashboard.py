@@ -3,17 +3,59 @@ Sakhi — Dashboard Service
 ===========================
 Query functions for the 5 parent dashboard metrics.
 All queries operate on profiles owned by the requesting account.
+
+Optimisations applied
+---------------------
+* ``get_overview`` runs all 5 metric queries concurrently via ``asyncio.gather``,
+  reducing wall-clock time to roughly the duration of the *slowest* query.
+* A lightweight 30-second TTL in-memory cache prevents redundant DB round-trips
+  when a parent refreshes the dashboard in quick succession or switches child
+  profiles back and forth.  The cache is profile-scoped so data remains correct
+  across multiple children.
 """
 
+import asyncio
 import json
 import logging
+import time
 import uuid
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from db.pool import get_pool
 
 logger = logging.getLogger("sakhi.dashboard")
+
+# ---------------------------------------------------------------------------
+# Simple TTL in-memory cache
+# ---------------------------------------------------------------------------
+# Structure: { profile_id: (expires_at_monotonic, cached_payload) }
+_CACHE_TTL_SECONDS = 30
+_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _cache_get(profile_id: str) -> Any | None:
+    """Return cached data if it exists and has not expired, else None."""
+    entry = _cache.get(profile_id)
+    if entry is None:
+        return None
+    expires_at, payload = entry
+    if time.monotonic() > expires_at:
+        del _cache[profile_id]
+        return None
+    return payload
+
+
+def _cache_set(profile_id: str, payload: Any) -> None:
+    """Store payload in cache with a TTL expiry."""
+    _cache[profile_id] = (time.monotonic() + _CACHE_TTL_SECONDS, payload)
+
+
+def invalidate_dashboard_cache(profile_id: str) -> None:
+    """Call this from any write path (session end, alert dismiss, etc.) to
+    evict stale data so the next read reflects the latest state immediately."""
+    _cache.pop(profile_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -245,11 +287,34 @@ async def get_alerts(profile_id: str, limit: int = 20) -> dict:
 
 
 async def get_overview(profile_id: str) -> dict:
-    """Fetch all 5 dashboard metrics for a child profile."""
-    return {
-        "time_spent": await get_time_spent(profile_id),
-        "mood": await get_mood_summary(profile_id),
-        "topics": await get_topics_explored(profile_id),
-        "streak": await get_streak(profile_id),
-        "alerts": await get_alerts(profile_id),
+    """Fetch all 5 dashboard metrics for a child profile.
+
+    Optimisations:
+    - Cache: returns the cached payload for up to 30 seconds to avoid
+      hammering the DB on quick refreshes or child-profile switches.
+    - Concurrency: ``asyncio.gather`` fires all 5 metric coroutines in
+      parallel so wall-clock latency is bounded by the *slowest* query
+      rather than the *sum* of all queries.
+    """
+    cached = _cache_get(profile_id)
+    if cached is not None:
+        logger.debug("dashboard cache hit for profile %s", profile_id)
+        return cached
+
+    time_spent, mood, topics, streak, alerts = await asyncio.gather(
+        get_time_spent(profile_id),
+        get_mood_summary(profile_id),
+        get_topics_explored(profile_id),
+        get_streak(profile_id),
+        get_alerts(profile_id),
+    )
+
+    payload = {
+        "time_spent": time_spent,
+        "mood": mood,
+        "topics": topics,
+        "streak": streak,
+        "alerts": alerts,
     }
+    _cache_set(profile_id, payload)
+    return payload
