@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from api.dependencies import require_profile_token
 from services.chat_graph import get_chat_graph
 from services.chat_sessions import get_chat_session, list_chat_sessions
+from services.dashboard import invalidate_dashboard_cache
 from services.profiles import get_current_profile
 from services.session_summarizer import summarize_session
 
@@ -242,6 +243,11 @@ async def end_chat_session(req: EndSessionRequest, claims: dict = Depends(requir
             turn_count=turn_count,
             mode=req.mode,
         )
+
+        # Evict the parent's dashboard cache for this child so the next
+        # dashboard load shows the freshly-written session data immediately.
+        invalidate_dashboard_cache(claims["profile_id"])
+
         return {"status": "success", "summary": result}
 
     except Exception as e:

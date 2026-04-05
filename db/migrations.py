@@ -112,11 +112,19 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_session_summaries_profile
         ON session_summaries(profile_id, ended_at DESC);
     """,
+    # started_at index: dashboard queries filter WHERE started_at >= $cutoff,
+    # but the existing index above covers ended_at — this new index covers the
+    # actual filter column used by time_spent, mood, and topics queries.
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_summaries_profile_started
+        ON session_summaries(profile_id, started_at DESC);
+    """,
     """
     CREATE INDEX IF NOT EXISTS idx_alerts_profile
         ON alerts(profile_id, recorded_at DESC);
     """,
     # ------- pgvector extension -------
+
     """
     CREATE EXTENSION IF NOT EXISTS vector;
     """,
